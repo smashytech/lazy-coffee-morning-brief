@@ -138,6 +138,10 @@ async function aiProcess(items) {
 
 2. Pick the 3 most important/newsworthy articles a security professional should read today. Use their index numbers.
 
+3.  Do NOT start any sentence with "The article discusses", "This article", or similar phrases.
+
+4.  Write in active voice, leading with the subject of the news.
+
 Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
   "summaries": [{"index":0,"summary":"...","topic":"..."},...],
