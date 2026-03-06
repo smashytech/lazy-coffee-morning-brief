@@ -7,11 +7,12 @@ A personal, newspaper-style cybersecurity news digest powered by Claude AI. Fetc
 ![Claude](https://img.shields.io/badge/Claude-Sonnet-d97706)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker&logoColor=white)
 
+<img width="1247" height="943" alt="image" src="https://github.com/user-attachments/assets/f82e63e1-44ad-48e1-8aba-3837814fb848" />
+
+
 ## Support
 
 ☕ If this project helped you, consider [buying me a coffee](https://buymeacoffee.com/devzelin).
-<img width="1247" height="943" alt="image" src="https://github.com/user-attachments/assets/f82e63e1-44ad-48e1-8aba-3837814fb848" />
-
 
 ## Features
 
