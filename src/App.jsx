@@ -114,7 +114,7 @@ async function fetchFeed(feed) {
       description: description.replace(/<[^>]*>/g, "").slice(0, 600),
       pubDate:     getText("pubDate") || getText("published") || getText("updated"),
     };
-  }).filter(it => it.id && it.title);
+  }).filter(it => it.id && it.title && isRecent(it.pubDate));
 }
 
 // ─── AI: summarise + categorise + pick top 3 ──────────────────────────────────
@@ -184,7 +184,7 @@ export default function DigestApp() {
   const [stats,       setStats]       = useState(() => loadLibrary()[todayKey()]?.stats  || null);
   const [errMsg,      setErrMsg]      = useState("");
   const [showSeen,    setShowSeen]    = useState(false);
-  const [columns,     setColumns]     = useState(1);  // 1 or 2 column layout
+  const [columns,     setColumns]     = useState(() => Number(localStorage.getItem("digest:columns")) || 1);
 
   // Sources panel
   const [showSources, setShowSources] = useState(false);
@@ -194,6 +194,7 @@ export default function DigestApp() {
   const [addError,    setAddError]    = useState("");
   const [clearMsg,    setClearMsg]    = useState("");
   const [debugLog,    setDebugLog]    = useState([]);  // diagnostic messages shown during fetch
+  const [collapsedTopics, setCollapsedTopics] = useState(new Set());
 
   // Library panel
   const [showLibrary,  setShowLibrary]  = useState(false);
@@ -318,6 +319,14 @@ export default function DigestApp() {
 
   const libraryDays   = Object.keys(library).sort().reverse();  // newest first
   const libraryEntry  = libraryDay ? library[libraryDay] : null;
+
+  function toggleTopic(topic) {
+    setCollapsedTopics(prev => {
+      const next = new Set(prev);
+      next.has(topic) ? next.delete(topic) : next.add(topic);
+      return next;
+    });
+  }
 
   function openLibraryDay(key) { setLibraryDay(key); setShowSources(false); }
   function closeLibrary()      { setLibraryDay(null); setShowLibrary(false); }
@@ -465,8 +474,11 @@ export default function DigestApp() {
 
         /* ── Topic sections ── */
         .topic-section { max-width: 720px; margin: 0 auto 2.8rem; }
-        .topic-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #c8bda8; display: flex; align-items: center; gap: 0.6rem; }
+        .topic-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #c8bda8; display: flex; align-items: center; gap: 0.6rem; cursor: pointer; user-select: none; }
+        .topic-header:hover { color: #1c1912; }
         .topic-count { background: #1c1912; color: #f5f1e8; font-size: 0.52rem; padding: 0.15em 0.55em; border-radius: 10px; }
+        .topic-chevron { margin-left: auto; font-size: 0.7rem; transition: transform 0.2s; display: inline-block; }
+        .topic-chevron.collapsed { transform: rotate(-90deg); }
 
         /* ── Articles ── */
         .article { padding: 1.1rem 0; border-bottom: 1px solid #ddd5c4; }
@@ -501,8 +513,8 @@ export default function DigestApp() {
             <p className="masthead-meta">{TODAY}</p>
             <div className="masthead-actions">
               <div className="col-toggle">
-                <button className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => setColumns(1)} title="Single column">▬</button>
-                <button className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => setColumns(2)} title="Two columns">⊟</button>
+                <button className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => { setColumns(1); localStorage.setItem("digest:columns", 1); }} title="Single column">▬</button>
+                <button className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => { setColumns(2); localStorage.setItem("digest:columns", 2); }} title="Two columns">⊟</button>
               </div>
               <button className={`hdr-btn${showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(s => !s); setShowSources(false); setLibraryDay(null); }}>
                 📚 Library
@@ -626,21 +638,27 @@ export default function DigestApp() {
                 )}
 
                 {/* Topic groups from that day */}
-                {libraryEntry.groups?.map(({ topic, items }) => (
-                  <section key={topic} style={{marginBottom:"1.8rem"}}>
-                    <h2 className="topic-header">{topic}<span className="topic-count">{items.length}</span></h2>
-                    {items.map(item => (
-                      <article className="article" key={item.id}>
-                        <div className="article-meta">
-                          <span className="source-tag">{item.sourceTag}</span>
-                          <span className="article-date">{fmtDate(item.pubDate)}</span>
-                        </div>
-                        <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                        <p className="article-summary">{item.summary}</p>
-                      </article>
-                    ))}
-                  </section>
-                ))}
+                {libraryEntry.groups?.map(({ topic, items }) => {
+                  const collapsed = collapsedTopics.has(topic);
+                  return (
+                    <section key={topic} style={{marginBottom:"1.8rem"}}>
+                      <h2 className="topic-header" onClick={() => toggleTopic(topic)}>
+                        {topic}<span className="topic-count">{items.length}</span>
+                        <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
+                      </h2>
+                      {!collapsed && items.map(item => (
+                        <article className="article" key={item.id}>
+                          <div className="article-meta">
+                            <span className="source-tag">{item.sourceTag}</span>
+                            <span className="article-date">{fmtDate(item.pubDate)}</span>
+                          </div>
+                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
+                          <p className="article-summary">{item.summary}</p>
+                        </article>
+                      ))}
+                    </section>
+                  );
+                })}
               </>
             )}
           </div>
@@ -721,23 +739,31 @@ export default function DigestApp() {
             )}
 
             {/* All articles by topic */}
-            {newGroups.map(({ topic, items }) => (
-              <section className="topic-section" key={topic}>
-                <h2 className="topic-header">{topic}<span className="topic-count">{items.length}</span></h2>
-                <div className="article-grid">
-                {items.map(item => (
-                  <article className="article" key={item.id}>
-                    <div className="article-meta">
-                      <span className="source-tag">{item.sourceTag}</span>
-                      <span className="article-date">{fmtDate(item.pubDate)}</span>
+            {newGroups.map(({ topic, items }) => {
+              const collapsed = collapsedTopics.has(topic);
+              return (
+                <section className="topic-section" key={topic}>
+                  <h2 className="topic-header" onClick={() => toggleTopic(topic)}>
+                    {topic}<span className="topic-count">{items.length}</span>
+                    <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
+                  </h2>
+                  {!collapsed && (
+                    <div className="article-grid">
+                      {items.map(item => (
+                        <article className="article" key={item.id}>
+                          <div className="article-meta">
+                            <span className="source-tag">{item.sourceTag}</span>
+                            <span className="article-date">{fmtDate(item.pubDate)}</span>
+                          </div>
+                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
+                          <p className="article-summary">{item.summary}</p>
+                        </article>
+                      ))}
                     </div>
-                    <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                    <p className="article-summary">{item.summary}</p>
-                  </article>
-                ))}
-                </div>
-              </section>
-            ))}
+                  )}
+                </section>
+              );
+            })}
           </>
         )}
 
