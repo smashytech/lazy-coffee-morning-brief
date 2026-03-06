@@ -12,7 +12,9 @@ A personal, newspaper-style cybersecurity news digest powered by Claude AI. Fetc
 
 ## Support
 
-☕ If this project helped you, consider [buying me a coffee](https://buymeacoffee.com/devzelin).
+If you find this project useful, you can support it here:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/devzelin)
 
 ## Features
 
