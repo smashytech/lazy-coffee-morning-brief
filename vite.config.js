@@ -1,0 +1,84 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// configureServer is a Vite PLUGIN HOOK, not a server config option.
+// It must live inside the plugins array to actually run.
+const proxyPlugin = {
+  name: 'morning-brief-proxy',
+  configureServer(server) {
+    server.middlewares.use(async (req, res, next) => {
+
+      // ── RSS feed proxy ──────────────────────────────────────────────
+      if (req.url.startsWith('/proxy?')) {
+        const params  = new URLSearchParams(req.url.slice('/proxy?'.length))
+        const feedUrl = params.get('url')
+        if (!feedUrl) { res.writeHead(400); res.end('Missing ?url='); return }
+
+        console.log(`[proxy/feed] fetching: ${feedUrl}`)
+        try {
+          const upstream = await fetch(feedUrl, {
+            redirect: 'follow',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Cache-Control': 'no-cache',
+            }
+          })
+          const body = await upstream.text()
+          console.log(`[proxy/feed] ${upstream.status}, ${body.length} bytes — preview: ${body.slice(0, 150)}`)
+          res.writeHead(upstream.status, {
+            'Content-Type': upstream.headers.get('content-type') || 'application/xml',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(body)
+        } catch (err) {
+          console.error(`[proxy/feed] FAILED:`, err.message)
+          res.writeHead(502); res.end(`Feed fetch failed: ${err.message}`)
+        }
+        return
+      }
+
+      // ── Anthropic API proxy ─────────────────────────────────────────
+      if (req.url.startsWith('/anthropic/')) {
+        const apiKey = process.env.ANTHROPIC_API_KEY
+        const apiUrl = `https://api.anthropic.com${req.url.replace('/anthropic', '')}`
+        if (!apiKey) console.error('[proxy/anthropic] WARNING: ANTHROPIC_API_KEY not set!')
+        else console.log('[proxy/anthropic] key:', apiKey.slice(0, 8) + '...')
+
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        const body = Buffer.concat(chunks)
+
+        try {
+          const upstream = await fetch(apiUrl, {
+            method: req.method,
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey || '',
+              'anthropic-version': '2023-06-01',
+            },
+            body,
+          })
+          const respBody = await upstream.text()
+          console.log(`[proxy/anthropic] ${upstream.status}, ${respBody.length} bytes`)
+          res.writeHead(upstream.status, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(respBody)
+        } catch (err) {
+          console.error(`[proxy/anthropic] FAILED:`, err.message)
+          res.writeHead(502); res.end(`API fetch failed: ${err.message}`)
+        }
+        return
+      }
+
+      next()
+    })
+  }
+}
+
+export default defineConfig({
+  plugins: [react(), proxyPlugin],
+})
