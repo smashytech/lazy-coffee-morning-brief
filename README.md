@@ -24,7 +24,7 @@ Default sources: **The Hacker News**, **BleepingComputer**, **Risky Business**
 
 ## Quick start
 
-### 1. Get an Anthropic API key
+### 1. Get an Anthropic API key (5€ will last you a long time)
 
 Create a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
 
