@@ -177,11 +177,11 @@ const TODAY = new Date().toLocaleDateString("en-US", {
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function DigestApp() {
-  const [phase,       setPhase]       = useState("idle");
-  const [newGroups,   setNewGroups]   = useState([]);
-  const [top3,        setTop3]        = useState([]);    // array of 3 article objects
+  const [phase,       setPhase]       = useState(() => loadLibrary()[todayKey()] ? "done" : "idle");
+  const [newGroups,   setNewGroups]   = useState(() => loadLibrary()[todayKey()]?.groups || []);
+  const [top3,        setTop3]        = useState(() => loadLibrary()[todayKey()]?.top3   || []);
   const [seenItems,   setSeenItems]   = useState([]);
-  const [stats,       setStats]       = useState(null);
+  const [stats,       setStats]       = useState(() => loadLibrary()[todayKey()]?.stats  || null);
   const [errMsg,      setErrMsg]      = useState("");
   const [showSeen,    setShowSeen]    = useState(false);
   const [columns,     setColumns]     = useState(1);  // 1 or 2 column layout
