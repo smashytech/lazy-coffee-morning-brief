@@ -7,6 +7,9 @@ A personal, newspaper-style cybersecurity news digest powered by Claude AI. Fetc
 ![Claude](https://img.shields.io/badge/Claude-Sonnet-d97706)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker&logoColor=white)
 
+<img width="1247" height="943" alt="image" src="https://github.com/user-attachments/assets/f82e63e1-44ad-48e1-8aba-3837814fb848" />
+
+
 ## Features
 
 - **AI summaries** — Claude writes a 2–3 sentence plain-English summary for every article
@@ -21,7 +24,7 @@ Default sources: **The Hacker News**, **BleepingComputer**, **Risky Business**
 
 ## Quick start
 
-### 1. Get an Anthropic API key
+### 1. Get an Anthropic API key (5€ will last you a long time)
 
 Create a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
 
