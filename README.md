@@ -10,6 +10,12 @@ A personal, newspaper-style cybersecurity news digest powered by Claude AI. Fetc
 <img width="1247" height="943" alt="image" src="https://github.com/user-attachments/assets/f82e63e1-44ad-48e1-8aba-3837814fb848" />
 
 
+## Support
+
+If you find this project useful, you can support it here:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/devzelin)
+
 ## Features
 
 - **AI summaries** — Claude writes a 2–3 sentence plain-English summary for every article
