@@ -2,7 +2,10 @@ services:
   morning-brief:
     build: .
     ports:
-      - "5173:5173"       # maps your laptop's port 5173 → container's port 5173
+      # Bound to 127.0.0.1 so only your own machine can reach the proxy —
+      # the Anthropic proxy would otherwise serve requests (using your API
+      # key) to anyone on the LAN.
+      - "127.0.0.1:5173:5173"
     env_file:
       - .env              # loads ANTHROPIC_API_KEY from your .env file into the container
     volumes:

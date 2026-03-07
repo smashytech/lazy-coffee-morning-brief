@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ─── Default feeds ─────────────────────────────────────────────────────────────
 const DEFAULT_FEEDS = [
@@ -7,9 +7,31 @@ const DEFAULT_FEEDS = [
   { id: "rb",  name: "Risky Business",   url: "https://risky.biz/feeds/risky-business/",      tag: "RB",  enabled: true, builtin: true },
 ];
 
-const FEEDS_KEY   = "digest:feeds_v1";
-const SEEN_KEY    = "digest:seen_v2";
-const LIBRARY_KEY = "digest:library_v1";  // stores past digests by date string
+const FEEDS_KEY     = "digest:feeds_v1";
+const SEEN_KEY      = "digest:seen_v2";
+const LIBRARY_KEY   = "digest:library_v1";
+const AI_CONFIG_KEY = "digest:ai_config_v1";
+
+const SEEN_LIMIT    = 500;
+const LIBRARY_LIMIT = 30;
+const FEED_TIMEOUT_MS = 15000;
+const AI_TIMEOUT_MS   = 60000;
+const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
+
+function loadAiConfig() {
+  const defaults = {
+    provider: "anthropic",
+    localUrl: "http://localhost:11434",
+    model: "llama3",
+    claudeModel: DEFAULT_CLAUDE_MODEL,
+    apiKey: "",
+  };
+  try {
+    const r = localStorage.getItem(AI_CONFIG_KEY);
+    return { ...defaults, ...(r ? JSON.parse(r) : {}) };
+  } catch { return defaults; }
+}
+function saveAiConfig(cfg) { localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(cfg)); }
 
 // ─── Storage helpers ───────────────────────────────────────────────────────────
 
@@ -23,87 +45,84 @@ function loadSeen() {
   try { const r = localStorage.getItem(SEEN_KEY); return new Set(r ? JSON.parse(r) : []); }
   catch { return new Set(); }
 }
-function saveSeen(s) { localStorage.setItem(SEEN_KEY, JSON.stringify([...s])); }
+function saveSeen(s) {
+  // Set preserves insertion order — keep the most recent IDs only.
+  const arr = [...s];
+  const trimmed = arr.length > SEEN_LIMIT ? arr.slice(arr.length - SEEN_LIMIT) : arr;
+  localStorage.setItem(SEEN_KEY, JSON.stringify(trimmed));
+}
 
-// Library: { "2025-03-06": { date, groups, top3, stats }, ... }
 function loadLibrary() {
   try { const r = localStorage.getItem(LIBRARY_KEY); return r ? JSON.parse(r) : {}; }
   catch { return {}; }
 }
-function saveLibrary(lib) { localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); }
+function saveLibrary(lib) {
+  const keys = Object.keys(lib).sort().reverse();
+  if (keys.length <= LIBRARY_LIMIT) {
+    localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib));
+    return lib;
+  }
+  const keep = keys.slice(0, LIBRARY_LIMIT);
+  const pruned = {};
+  for (const k of keep) pruned[k] = lib[k];
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(pruned));
+  return pruned;
+}
 
 function todayKey() {
-  // Returns "YYYY-MM-DD" in local time — used as the library key
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
 function isRecent(dateStr) {
-  // No date = include it (better than silently dropping)
   if (!dateStr) return true;
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return true; // unparseable = include
-    // Accept anything in the last 48h to handle timezone differences
-    // and feeds that publish just after midnight
-    const hours48ago = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    return d >= hours48ago;
-  } catch { return true; }
-}
-
-function clearSeenCache() {
-  localStorage.removeItem("digest:seen_v2");
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return true;
+  const hours48ago = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  return d >= hours48ago;
 }
 
 function makeTag(name) {
   return name.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 4) || "???";
 }
 
+// ─── fetch with timeout ────────────────────────────────────────────────────────
+
+async function fetchWithTimeout(url, options = {}, ms = FEED_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error(`Request timed out after ${ms / 1000}s`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── RSS fetching ──────────────────────────────────────────────────────────────
 
 async function fetchFeed(feed) {
-  const res = await fetch(`/proxy?url=${encodeURIComponent(feed.url)}`);
+  const res = await fetchWithTimeout(`/proxy?url=${encodeURIComponent(feed.url)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${feed.name}`);
   const xml = await res.text();
 
-  // Log the first 300 chars so we can see what we're actually getting back
-  console.log(`[${feed.name}] raw XML preview:`, xml.slice(0, 300));
-
-  // Try XML first, fall back to HTML parser (handles broken XML)
   let doc = new DOMParser().parseFromString(xml, "text/xml");
-  const parseErr = doc.querySelector("parsererror");
-  if (parseErr) {
-    console.warn(`[${feed.name}] XML parse error, trying text/html`);
+  if (doc.querySelector("parsererror")) {
     doc = new DOMParser().parseFromString(xml, "text/html");
   }
 
-  // querySelectorAll doesn't handle namespace prefixes like <atom:entry>.
-  // Use getElementsByTagName instead — it ignores namespaces.
+  // Use getElementsByTagName — it ignores namespace prefixes like <atom:entry>.
   let items = [...doc.getElementsByTagName("item")];
   if (items.length === 0) items = [...doc.getElementsByTagName("entry")];
-  console.log(`[${feed.name}] found ${items.length} items via getElementsByTagName`);
 
-  items = items.slice(0, 12);
-
-  return items.map(item => {
-    // Also use getElementsByTagName for child elements to handle namespaced tags
-    const getText = tag => {
-      const el = item.getElementsByTagName(tag)[0];
-      return el?.textContent?.trim() || "";
-    };
-
-    // <link> can be text content (RSS) or href attribute (Atom)
+  return items.slice(0, 12).map(item => {
+    const getText = tag => item.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
     const linkEl = item.getElementsByTagName("link")[0];
-    const link =
-      linkEl?.getAttribute("href") ||
-      linkEl?.textContent?.trim() ||
-      getText("guid");
-
+    const link = linkEl?.getAttribute("href") || linkEl?.textContent?.trim() || getText("guid");
     const description =
-      getText("description") ||
-      getText("summary") ||
-      getText("content") ||
-      getText("content:encoded");
+      getText("description") || getText("summary") || getText("content") || getText("content:encoded");
 
     return {
       id:          link,
@@ -117,22 +136,33 @@ async function fetchFeed(feed) {
   }).filter(it => it.id && it.title && isRecent(it.pubDate));
 }
 
+// ─── Claude model pricing hints (input / output per million tokens) ────────────
+const MODEL_PRICING = {
+  "claude-opus-4-7":             "$15 in / $75 out per 1M tokens",
+  "claude-opus-4-6":             "$15 in / $75 out per 1M tokens",
+  "claude-opus-4-5":             "$15 in / $75 out per 1M tokens",
+  "claude-opus-4-20250514":      "$15 in / $75 out per 1M tokens",
+  "claude-sonnet-4-6":           "$3 in / $15 out per 1M tokens",
+  "claude-sonnet-4-5":           "$3 in / $15 out per 1M tokens",
+  "claude-sonnet-4-20250514":    "$3 in / $15 out per 1M tokens",
+  "claude-haiku-4-5-20251001":   "$0.80 in / $4 out per 1M tokens",
+  "claude-3-5-sonnet-20241022":  "$3 in / $15 out per 1M tokens",
+  "claude-3-5-haiku-20241022":   "$0.80 in / $4 out per 1M tokens",
+  "claude-3-opus-20240229":      "$15 in / $75 out per 1M tokens",
+  "claude-3-sonnet-20240229":    "$3 in / $15 out per 1M tokens",
+  "claude-3-haiku-20240307":     "$0.25 in / $1.25 out per 1M tokens",
+};
+function modelLabel(id) {
+  if (MODEL_PRICING[id]) return `${id} (${MODEL_PRICING[id]})`;
+  if (id.includes("opus"))   return `${id} ($15 in / $75 out per 1M tokens)`;
+  if (id.includes("sonnet")) return `${id} ($3 in / $15 out per 1M tokens)`;
+  if (id.includes("haiku"))  return `${id} ($0.80 in / $4 out per 1M tokens)`;
+  return id;
+}
+
 // ─── AI: summarise + categorise + pick top 3 ──────────────────────────────────
-// We do everything in one API call to keep costs low.
-// Claude returns { summaries: [{index,summary,topic}], top3: [index,index,index] }
 
-async function aiProcess(items) {
-  const payload = items.map((it, i) =>
-    `[${i}] SOURCE: ${it.source}\nTITLE: ${it.title}\nBODY: ${it.description}`
-  ).join("\n\n---\n\n");
-
-  const res = await fetch("/anthropic/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      system: `You are a cybersecurity news editor. Given a list of articles:
+const SYSTEM_PROMPT = `You are a cybersecurity news editor. Given a list of articles:
 
 1. For each article write a 2–3 sentence plain-English summary and assign a short topic label (1–3 words, e.g. Ransomware, Vulnerabilities, Data Breach, Nation-State, Malware, Privacy, Podcast, Policy, Phishing, Cybercrime, AI Security, Zero-Day, Supply Chain).
 
@@ -146,19 +176,67 @@ Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
   "summaries": [{"index":0,"summary":"...","topic":"..."},...],
   "top3": [index1, index2, index3]
-}`,
-      messages: [{ role: "user", content: payload }],
-    }),
-  });
+}`;
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${res.status}`);
+function parseAiJson(text) {
+  const cleaned = text.replace(/```json|```/g, "").trim();
+  try { return JSON.parse(cleaned); } catch {}
+  // Model sometimes wraps the JSON in prose — grab the first { ... } block.
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error(`AI response was not valid JSON. First 200 chars: ${cleaned.slice(0, 200)}`);
+  return JSON.parse(match[0]);
+}
+
+async function aiProcess(items, aiConfig) {
+  const payload = items.map((it, i) =>
+    `[${i}] SOURCE: ${it.source}\nTITLE: ${it.title}\nBODY: ${it.description}`
+  ).join("\n\n---\n\n");
+
+  if (aiConfig?.provider === "local") {
+    const res = await fetchWithTimeout(`/localllm?url=${encodeURIComponent(aiConfig.localUrl)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(aiConfig.apiKey ? { "Authorization": `Bearer ${aiConfig.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: aiConfig.model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user",   content: payload },
+        ],
+        temperature: 0.3,
+        stream: false,
+      }),
+    }, AI_TIMEOUT_MS);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Local LLM error ${res.status}`);
+    }
+    const data = await res.json();
+    return parseAiJson(data.choices?.[0]?.message?.content || "");
   }
 
+  const res = await fetchWithTimeout("/anthropic/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: aiConfig.claudeModel || DEFAULT_CLAUDE_MODEL,
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: payload }],
+    }),
+  }, AI_TIMEOUT_MS);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `API error ${res.status}`;
+    if (res.status === 401 || /api key/i.test(msg)) {
+      throw new Error("Anthropic API key missing or invalid — check your .env file and restart the dev server.");
+    }
+    throw new Error(msg);
+  }
   const data = await res.json();
-  const text = data.content.map(c => c.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+  return parseAiJson(data.content.map(c => c.text || "").join(""));
 }
 
 // ─── Formatting helpers ────────────────────────────────────────────────────────
@@ -169,7 +247,6 @@ function fmtDate(str) {
 }
 
 function fmtLibraryDate(key) {
-  // key is "YYYY-MM-DD" — parse as local date
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
@@ -178,34 +255,97 @@ const TODAY = new Date().toLocaleDateString("en-US", {
   weekday: "long", year: "numeric", month: "long", day: "numeric"
 });
 
+// ─── Article card (shared by library and topic sections) ──────────────────────
+
+function ArticleBody({ item }) {
+  return (
+    <>
+      <div className="article-meta">
+        <span className="source-tag">{item.sourceTag}</span>
+        <span className="article-date">{fmtDate(item.pubDate)}</span>
+      </div>
+      <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
+      <p className="article-summary">{item.summary}</p>
+    </>
+  );
+}
+
+function ArticleCard({ item }) {
+  return <article className="article"><ArticleBody item={item} /></article>;
+}
+
+function TopicSection({ topic, items, collapsed, onToggle }) {
+  return (
+    <section className="topic-section">
+      <button
+        type="button"
+        className="topic-header"
+        aria-expanded={!collapsed}
+        onClick={() => onToggle(topic)}
+      >
+        {topic}<span className="topic-count">{items.length}</span>
+        <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
+      </button>
+      {!collapsed && (
+        <div className="article-grid">
+          {items.map(item => <ArticleCard key={item.id} item={item} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 export default function DigestApp() {
-  const [phase,       setPhase]       = useState(() => loadLibrary()[todayKey()] ? "done" : "idle");
-  const [newGroups,   setNewGroups]   = useState(() => loadLibrary()[todayKey()]?.groups || []);
-  const [top3,        setTop3]        = useState(() => loadLibrary()[todayKey()]?.top3   || []);
-  const [stats,       setStats]       = useState(() => loadLibrary()[todayKey()]?.stats  || null);
+  const initialEntry = loadLibrary()[todayKey()];
+  const [phase,       setPhase]       = useState(() => initialEntry ? "done" : "idle");
+  const [newGroups,   setNewGroups]   = useState(() => initialEntry?.groups || []);
+  const [top3,        setTop3]        = useState(() => initialEntry?.top3   || []);
+  const [stats,       setStats]       = useState(() => initialEntry?.stats  || null);
   const [errMsg,      setErrMsg]      = useState("");
   const [columns,     setColumns]     = useState(() => Number(localStorage.getItem("digest:columns")) || 1);
+  const [theme,       setTheme]       = useState(() => {
+    const t = localStorage.getItem("digest:theme");
+    if (t) return t;
+    return localStorage.getItem("digest:dark") === "1" ? "dark" : "light";
+  });
 
-  // Sources panel
   const [showSources, setShowSources] = useState(false);
   const [feeds,       setFeeds]       = useState(loadFeeds);
   const [newName,     setNewName]     = useState("");
   const [newUrl,      setNewUrl]      = useState("");
   const [addError,    setAddError]    = useState("");
   const [clearMsg,    setClearMsg]    = useState("");
-  const [debugLog,    setDebugLog]    = useState([]);  // diagnostic messages shown during fetch
+  const [aiConfig,    setAiConfig]    = useState(loadAiConfig);
+  const [claudeModels, setClaudeModels] = useState([]);
+  const claudeModelsLoadedRef = useRef(false);
+  const runningRef            = useRef(false);
+
+  useEffect(() => {
+    if (aiConfig.provider !== "anthropic") return;
+    if (claudeModelsLoadedRef.current) return;
+    claudeModelsLoadedRef.current = true;
+    fetchWithTimeout("/anthropic/v1/models", {}, 8000)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const ids = (d?.data || []).map(m => m.id).filter(id => id.startsWith("claude-"));
+        if (ids.length) setClaudeModels(ids);
+      })
+      .catch(() => { claudeModelsLoadedRef.current = false; });
+  }, [aiConfig.provider]);
+
+  const [debugLog,    setDebugLog]    = useState([]);
   const [collapsedTopics, setCollapsedTopics] = useState(new Set());
 
-  // Library panel
   const [showLibrary,  setShowLibrary]  = useState(false);
   const [library,      setLibrary]      = useState(loadLibrary);
-  const [libraryDay,   setLibraryDay]   = useState(null);  // key of day being viewed
+  const [libraryDay,   setLibraryDay]   = useState(null);
 
-  // ── Feed management ──────────────────────────────────────────────────────────
+  // ── Feed management ─────────────────────────────────────────────────────────
 
   function updateFeeds(next) { setFeeds(next); saveFeeds(next); }
+  function updateAiConfig(next) { setAiConfig(next); saveAiConfig(next); }
   function toggleFeed(id)    { updateFeeds(feeds.map(f => f.id === id ? { ...f, enabled: !f.enabled } : f)); }
   function removeFeed(id)    { updateFeeds(feeds.filter(f => f.id !== id)); }
 
@@ -215,7 +355,7 @@ export default function DigestApp() {
     if (!name || !url) { setAddError("Both name and URL are required."); return; }
     if (feeds.find(f => f.url === url)) { setAddError("This feed is already in your list."); return; }
     try {
-      const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`);
+      const res = await fetchWithTimeout(`/proxy?url=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error(`Got HTTP ${res.status}`);
       const xml = await res.text();
       const doc = new DOMParser().parseFromString(xml, "text/xml");
@@ -227,81 +367,73 @@ export default function DigestApp() {
     setNewName(""); setNewUrl("");
   }
 
-  // ── Main fetch ───────────────────────────────────────────────────────────────
+  // ── Main fetch ──────────────────────────────────────────────────────────────
 
   async function run() {
+    if (runningRef.current) return; // guard against double-click
     const activeFeeds = feeds.filter(f => f.enabled);
     if (activeFeeds.length === 0) {
       setErrMsg("No sources enabled. Open Sources to add or enable some.");
       setPhase("error"); return;
     }
 
-    setPhase("fetching"); setErrMsg(""); setNewGroups([]); setTop3([]);
-    setStats(null);
+    runningRef.current = true;
+    setPhase("fetching"); setErrMsg(""); setNewGroups([]); setTop3([]); setStats(null);
 
     try {
       const seen = loadSeen();
-
-      // 1. Fetch all enabled feeds
       const fetchLog = [`Seen cache: ${seen.size} IDs`];
       let allItems = [];
       for (const feed of activeFeeds) {
         try {
           const items = await fetchFeed(feed);
-          allItems = [...allItems, ...items];
+          allItems = allItems.concat(items);
           fetchLog.push(`✓ ${feed.name}: ${items.length} items`);
-          console.log(`[fetch] ${feed.name}: ${items.length} items`);
-        }
-        catch (e) {
+        } catch (e) {
           fetchLog.push(`✗ ${feed.name}: ${e.message}`);
-          console.warn(`[fetch] ${feed.name} failed:`, e.message);
         }
       }
 
-      // 2. Deduplicate
-      const deduped = allItems.reduce((acc, it) => acc.find(x => x.id === it.id) ? acc : [...acc, it], []);
-
-      // Split into fresh (not yet seen)
+      // Deduplicate by id (O(n) via Map).
+      const deduped = [...new Map(allItems.map(it => [it.id, it])).values()];
       const freshItems = deduped.filter(it => !seen.has(it.id)).slice(0, 24);
-
       fetchLog.push(`Total: ${deduped.length} | Fresh: ${freshItems.length}`);
-      console.log('[fetch] Summary:', fetchLog.join(' | '));
       setDebugLog(fetchLog);
 
-      // 5. AI-process fresh articles
       let processed = [], pickedTop3 = [];
       if (freshItems.length > 0) {
         setPhase("processing");
-        const aiResult = await aiProcess(freshItems);
+        const aiResult = await aiProcess(freshItems, aiConfig);
 
         processed = (aiResult.summaries || [])
           .filter(r => r.index < freshItems.length)
           .map(r => ({ ...freshItems[r.index], summary: r.summary, topic: r.topic || "General" }));
 
-        // top3 is an array of indices into freshItems — map to processed articles
         pickedTop3 = (aiResult.top3 || [])
           .map(idx => processed.find(p => p.id === freshItems[idx]?.id))
           .filter(Boolean)
           .slice(0, 3);
       }
 
-      // 6. Group by topic
       const map = {};
       processed.forEach(it => { (map[it.topic] = map[it.topic] || []).push(it); });
       const grouped = Object.entries(map)
         .sort((a, b) => b[1].length - a[1].length)
         .map(([topic, items]) => ({ topic, items }));
 
-      // 7. Mark as seen
       processed.forEach(it => seen.add(it.id));
       saveSeen(seen);
 
-      // 8. Save to library (overwrite today's entry if re-fetching)
       if (processed.length > 0) {
         const lib = loadLibrary();
-        lib[todayKey()] = { date: TODAY, groups: grouped, top3: pickedTop3, stats: { newCount: processed.length, topicCount: grouped.length } };
-        saveLibrary(lib);
-        setLibrary(lib);
+        lib[todayKey()] = {
+          date: TODAY,
+          groups: grouped,
+          top3: pickedTop3,
+          stats: { newCount: processed.length, topicCount: grouped.length },
+        };
+        const pruned = saveLibrary(lib);
+        setLibrary(pruned);
       }
 
       setNewGroups(grouped);
@@ -312,462 +444,311 @@ export default function DigestApp() {
       console.error(e);
       setErrMsg(e.message || "Unknown error");
       setPhase("error");
+    } finally {
+      runningRef.current = false;
     }
   }
 
-  // ── Library helpers ──────────────────────────────────────────────────────────
+  // ── Library helpers ─────────────────────────────────────────────────────────
 
-  const libraryDays   = Object.keys(library).sort().reverse();  // newest first
-  const libraryEntry  = libraryDay ? library[libraryDay] : null;
+  const libraryDays  = Object.keys(library).sort().reverse();
+  const libraryEntry = libraryDay ? library[libraryDay] : null;
 
   function toggleTopic(topic) {
     setCollapsedTopics(prev => {
       const next = new Set(prev);
-      next.has(topic) ? next.delete(topic) : next.add(topic);
+      if (next.has(topic)) next.delete(topic); else next.add(topic);
       return next;
     });
   }
 
   function openLibraryDay(key) { setLibraryDay(key); setShowSources(false); }
-  function closeLibrary()      { setLibraryDay(null); setShowLibrary(false); }
 
   const isLoading    = phase === "fetching" || phase === "processing";
   const enabledCount = feeds.filter(f => f.enabled).length;
   const sourcesLabel = feeds.filter(f => f.enabled).map(f => f.name).join(" · ") || "No sources enabled";
+  const needsApiKey  = aiConfig.provider === "anthropic" && phase === "error" && /api key/i.test(errMsg);
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,500;1,400&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #f5f1e8; }
-        .digest-wrap { font-family: 'Lora', Georgia, serif; background: #f5f1e8; color: #1c1912; min-height: 100vh; padding: 0 1rem 4rem; }
+    <div className={`digest-wrap${columns === 2 ? " two-col" : ""}${theme === "dark" ? " dark" : ""}${theme === "geek" ? " geek" : ""}`}>
 
-        /* ── Masthead ── */
-        .masthead { max-width: 720px; margin: 0 auto; padding: 1rem 0 0; text-align: center; }
-        .masthead-top { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-bottom: 0.9rem; }
-        .masthead-meta  { font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase; color: #7a6f5a; }
-        .masthead-title { font-family: 'Playfair Display', Georgia, serif; font-size: clamp(2.8rem, 8vw, 5rem); font-weight: 700; line-height: 1; color: #1c1912; }
-        .masthead-rule-top  { border: none; border-top: 3px solid #1c1912; margin: 1.2rem 0 0; }
-        .masthead-rule-thin { border: none; border-top: 1px solid #1c1912; margin: 0.3rem 0 1.4rem; }
-        .masthead-sub { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: #7a6f5a; padding-bottom: 0.5rem; }
-        .masthead-byline { font-family: 'Lora', Georgia, serif; font-size: 0.72rem; font-style: italic; color: #9a8f7a; padding-bottom: 1.6rem; }
+      <header className="masthead">
+        <div className="masthead-top">
+          <p className="masthead-meta">{TODAY}</p>
+          <div className="masthead-actions">
+            <button
+              type="button"
+              className={`hdr-btn${theme !== "light" ? " active" : ""}`}
+              onClick={() => {
+                const next = theme === "light" ? "dark" : theme === "dark" ? "geek" : "light";
+                setTheme(next);
+                localStorage.setItem("digest:theme", next);
+              }}
+            >
+              {theme === "geek" ? "☀ Light" : theme === "dark" ? "▣ Geek" : "☾ Dark"}
+            </button>
+            <div className="col-toggle" role="group" aria-label="Column layout">
+              <button type="button" className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => { setColumns(1); localStorage.setItem("digest:columns", 1); }} title="Single column" aria-label="Single column">▬</button>
+              <button type="button" className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => { setColumns(2); localStorage.setItem("digest:columns", 2); }} title="Two columns" aria-label="Two columns">⊟</button>
+            </div>
+            <button type="button" className={`hdr-btn${showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(s => !s); setShowSources(false); setLibraryDay(null); }}>
+              📚 Library
+              {libraryDays.length > 0 && <span className="hdr-badge">{libraryDays.length}</span>}
+            </button>
+            <button type="button" className={`hdr-btn${showSources ? " active" : ""}`} onClick={() => { setShowSources(s => !s); setShowLibrary(false); setLibraryDay(null); }}>
+              ⚙ Sources
+              <span className="hdr-badge">{enabledCount}</span>
+            </button>
+          </div>
+        </div>
+        <h1 className="masthead-title">Morning Brief</h1>
+        <hr className="masthead-rule-top" />
+        <hr className="masthead-rule-thin" />
+        <p className="masthead-sub">{sourcesLabel}</p>
+        <p className="masthead-byline">By Rikard Zelin &amp; Claude</p>
+      </header>
 
-        /* Masthead action buttons */
-        .masthead-actions { display: flex; gap: 0.5rem; align-items: center; }
-        .hdr-btn {
-          background: none; border: 1px solid #c8bda8; color: #7a6f5a;
-          font-family: 'Lora', serif; font-size: 0.58rem; letter-spacing: 0.15em;
-          text-transform: uppercase; padding: 0.45em 0.9em; cursor: pointer;
-          border-radius: 2px; transition: all 0.15s; display: flex; align-items: center; gap: 0.4rem;
-        }
-        .hdr-btn:hover { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
-        .hdr-btn.active { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
-        .hdr-badge { background: #1c1912; color: #f5f1e8; font-size: 0.5rem; padding: 0.1em 0.45em; border-radius: 8px; }
-        .hdr-btn.active .hdr-badge { background: #f5f1e8; color: #1c1912; }
+      {needsApiKey && (
+        <div className="key-banner">
+          Your Anthropic API key looks missing or invalid. Check <code>.env</code>, then restart <code>npm run dev</code>.
+        </div>
+      )}
 
-        /* ── Panel base ── */
-        .panel { max-width: 720px; margin: 0 auto 2rem; border: 1px solid #c8bda8; background: #faf7f0; padding: 1.6rem; }
-        .panel-title { font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1.2rem; }
-
-        /* ── Sources panel ── */
-        .feed-row { display: flex; align-items: center; gap: 0.8rem; padding: 0.65rem 0; border-bottom: 1px solid #ece6da; }
-        .feed-row:last-of-type { border-bottom: none; }
-        .feed-toggle { position: relative; width: 32px; height: 18px; flex-shrink: 0; cursor: pointer; }
-        .feed-toggle input { opacity: 0; width: 0; height: 0; }
-        .feed-toggle-track { position: absolute; inset: 0; border-radius: 9px; background: #c8bda8; transition: background 0.2s; }
-        .feed-toggle input:checked ~ .feed-toggle-track { background: #1c1912; }
-        .feed-toggle-thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #f5f1e8; transition: transform 0.2s; }
-        .feed-toggle input:checked ~ .feed-toggle-track .feed-toggle-thumb { transform: translateX(14px); }
-        .feed-info { flex: 1; min-width: 0; }
-        .feed-name { font-size: 0.85rem; color: #1c1912; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .feed-url  { font-size: 0.65rem; color: #9a8f7a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .feed-tag  { font-size: 0.55rem; letter-spacing: 0.12em; text-transform: uppercase; background: #e8e1d4; color: #5a4e38; padding: 0.2em 0.55em; border-radius: 2px; flex-shrink: 0; }
-        .feed-remove { background: none; border: none; color: #c8bda8; font-size: 1rem; cursor: pointer; line-height: 1; padding: 0 0.2rem; transition: color 0.15s; flex-shrink: 0; }
-        .feed-remove:hover { color: #7a1e1e; }
-        .add-feed-form { margin-top: 1.2rem; display: flex; flex-direction: column; gap: 0.6rem; }
-        .add-feed-row  { display: flex; gap: 0.6rem; }
-        .add-feed-input { flex: 1; background: #f5f1e8; border: 1px solid #c8bda8; color: #1c1912; font-family: 'Lora', serif; font-size: 0.78rem; padding: 0.55em 0.8em; border-radius: 2px; outline: none; }
-        .add-feed-input:focus { border-color: #7a6f5a; }
-        .add-feed-input::placeholder { color: #b0a48f; }
-        .add-feed-btn { background: #1c1912; border: none; color: #f5f1e8; font-family: 'Lora', serif; font-size: 0.62rem; letter-spacing: 0.15em; text-transform: uppercase; padding: 0.6em 1.2em; cursor: pointer; border-radius: 2px; white-space: nowrap; transition: opacity 0.15s; }
-        .add-feed-btn:hover { opacity: 0.75; }
-        .add-feed-error { font-size: 0.72rem; color: #7a1e1e; }
-
-        /* ── Clear data ── */
-        .clear-data-section { margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px dashed #c8bda8; }
-        .clear-data-label { font-size: 0.65rem; letter-spacing: 0.12em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.7rem; }
-        .clear-data-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
-        .clear-btn { background: none; border: 1px solid #c8bda8; color: #7a6f5a; font-family: 'Lora', serif; font-size: 0.6rem; letter-spacing: 0.13em; text-transform: uppercase; padding: 0.45em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
-        .clear-btn:hover { border-color: #7a1e1e; color: #7a1e1e; }
-        .clear-btn.danger:hover { background: #7a1e1e; color: #f5f1e8; border-color: #7a1e1e; }
-
-        /* ── Library panel ── */
-        .library-days { display: flex; flex-direction: column; gap: 0.2rem; }
-        .library-day-btn { background: none; border: none; border-bottom: 1px solid #ece6da; padding: 0.7rem 0; cursor: pointer; text-align: left; font-family: 'Lora', serif; font-size: 0.82rem; color: #4a4132; display: flex; justify-content: space-between; align-items: center; transition: color 0.15s; }
-        .library-day-btn:hover { color: #1c1912; }
-        .library-day-btn.selected { color: #1c1912; font-weight: 600; }
-        .library-day-stats { font-size: 0.62rem; color: #9a8f7a; letter-spacing: 0.08em; }
-        .library-empty { font-size: 0.8rem; color: #9a8f7a; font-style: italic; }
-
-        /* Library day view — reuses article/group styles */
-        .library-back { background: none; border: none; font-family: 'Lora', serif; font-size: 0.62rem; letter-spacing: 0.15em; text-transform: uppercase; color: #7a6f5a; cursor: pointer; padding: 0; margin-bottom: 1.4rem; display: flex; align-items: center; gap: 0.4rem; transition: color 0.15s; }
-        .library-back:hover { color: #1c1912; }
-        .library-day-heading { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 600; color: #1c1912; margin-bottom: 0.3rem; }
-        .library-day-sub { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 1.6rem; }
-
-        /* ── Column layout toggle ── */
-        .col-toggle { display: flex; border: 1px solid #c8bda8; border-radius: 2px; overflow: hidden; }
-        .col-btn { background: none; border: none; color: #9a8f7a; cursor: pointer; padding: 0.38em 0.6em; font-size: 0.7rem; line-height: 1; transition: all 0.15s; }
-        .col-btn:hover { background: #e8e1d4; color: #1c1912; }
-        .col-btn.active { background: #1c1912; color: #f5f1e8; }
-
-        /* 2-column: topic sections go full-width, articles inside go 2-col grid */
-        .two-col .topic-section { max-width: 1100px; }
-        .two-col .stats-bar     { max-width: 1100px; }
-        .two-col .top3-section  { max-width: 1100px; }
-        .two-col .digest-footer { max-width: 1100px; }
-        .two-col .panel         { max-width: 1100px; }
-        .two-col .top3-cards    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 2rem; }
-        .two-col .article-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
-        .two-col .article       { break-inside: avoid; }
-        @media (max-width: 800px) {
-          .two-col .article-grid { grid-template-columns: 1fr; }
-          .two-col .top3-cards   { grid-template-columns: 1fr; }
-        }
-
-        /* ── Top 3 section ── */
-        .top3-section { max-width: 720px; margin: 0 auto 2.8rem; }
-        .top3-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #1c1912; display: flex; align-items: center; gap: 0.6rem; }
-        .top3-star { color: #1c1912; font-size: 0.7rem; }
-        .top3-card { padding: 1.1rem 0 1.1rem 1.1rem; border-bottom: 1px solid #ddd5c4; border-left: 2px solid #1c1912; margin-bottom: 0.1rem; }
-        .top3-card:last-child { border-bottom: none; }
-        .top3-rank { font-size: 0.58rem; letter-spacing: 0.18em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.35rem; }
-
-        /* ── Idle ── */
-        .idle-wrap { max-width: 720px; margin: 4rem auto; text-align: center; }
-        .idle-greeting { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-style: italic; color: #4a3f2a; margin-bottom: 0.6rem; }
-        .idle-sub { font-size: 0.8rem; color: #9a8f7a; margin-bottom: 2rem; line-height: 1.7; }
-
-        /* ── Buttons ── */
-        .fetch-btn { background: #1c1912; border: none; color: #f5f1e8; font-family: 'Lora', serif; font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; padding: 0.9em 2.4em; cursor: pointer; border-radius: 2px; transition: opacity 0.15s; }
-        .fetch-btn:hover { opacity: 0.75; }
-        .refresh-btn { background: none; border: 1px solid #9a8f7a; color: #5a4e38; font-family: 'Lora', serif; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; padding: 0.4em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
-        .refresh-btn:hover { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
-
-        /* ── Loading ── */
-        .status-wrap { max-width: 720px; margin: 4rem auto; text-align: center; }
-        .spinner { width: 26px; height: 26px; border: 2px solid #c8bda8; border-top-color: #1c1912; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1.2rem; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .status-label { font-size: 0.72rem; letter-spacing: 0.15em; text-transform: uppercase; color: #7a6f5a; }
-
-        /* ── Error / caught-up ── */
-        .err-head { font-family: 'Playfair Display', serif; font-size: 1.2rem; color: #7a1e1e; margin-bottom: 0.5rem; }
-        .err-detail { font-size: 0.78rem; color: #7a6f5a; margin-bottom: 1.4rem; }
-        .caught-up { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-style: italic; color: #4a3f2a; margin-bottom: 0.5rem; }
-        .caught-up-sub { font-size: 0.8rem; color: #7a6f5a; margin-bottom: 2rem; }
-
-        /* ── Stats bar ── */
-        .stats-bar { max-width: 720px; margin: 0 auto 2.5rem; display: flex; align-items: center; justify-content: space-between; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: #7a6f5a; }
-
-        /* ── Topic sections ── */
-        .topic-section { max-width: 720px; margin: 0 auto 2.8rem; }
-        .topic-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #c8bda8; display: flex; align-items: center; gap: 0.6rem; cursor: pointer; user-select: none; }
-        .topic-header:hover { color: #1c1912; }
-        .topic-count { background: #1c1912; color: #f5f1e8; font-size: 0.52rem; padding: 0.15em 0.55em; border-radius: 10px; }
-        .topic-chevron { margin-left: auto; font-size: 0.7rem; transition: transform 0.2s; display: inline-block; }
-        .topic-chevron.collapsed { transform: rotate(-90deg); }
-
-        /* ── Articles ── */
-        .article { padding: 1.1rem 0; border-bottom: 1px solid #ddd5c4; }
-        .article:last-child { border-bottom: none; }
-        .article-meta { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.45rem; }
-        .source-tag { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; background: #e8e1d4; color: #5a4e38; padding: 0.2em 0.6em; border-radius: 2px; font-weight: 500; }
-        .article-date { font-size: 0.64rem; color: #9a8f7a; }
-        .article-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 600; line-height: 1.35; color: #1c1912; text-decoration: none; display: block; margin-bottom: 0.5rem; transition: color 0.15s; }
-        .article-title:hover { color: #5a3e1a; }
-        .article-summary { font-size: 0.88rem; line-height: 1.7; color: #4a4132; }
-
-        /* ── Footer ── */
-        .digest-footer { max-width: 720px; margin: 3rem auto 0; padding-top: 1.4rem; border-top: 3px double #c8bda8; display: flex; align-items: center; justify-content: space-between; font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; }
-      `}</style>
-
-      <div className={`digest-wrap${columns === 2 ? " two-col" : ""}`}>
-
-        {/* ── Masthead ── */}
-        <header className="masthead">
-          <div className="masthead-top">
-            <p className="masthead-meta">{TODAY}</p>
-            <div className="masthead-actions">
-              <div className="col-toggle">
-                <button className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => { setColumns(1); localStorage.setItem("digest:columns", 1); }} title="Single column">▬</button>
-                <button className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => { setColumns(2); localStorage.setItem("digest:columns", 2); }} title="Two columns">⊟</button>
+      {showSources && (
+        <div className="panel">
+          <p className="panel-title">Manage Sources</p>
+          {feeds.map(feed => (
+            <div className="feed-row" key={feed.id}>
+              <label className="feed-toggle">
+                <input type="checkbox" checked={feed.enabled} onChange={() => toggleFeed(feed.id)} />
+                <div className="feed-toggle-track"><div className="feed-toggle-thumb" /></div>
+              </label>
+              <div className="feed-info">
+                <div className="feed-name">{feed.name}</div>
+                <div className="feed-url">{feed.url}</div>
               </div>
-              <button className={`hdr-btn${showLibrary ? " active" : ""}`} onClick={() => { setShowLibrary(s => !s); setShowSources(false); setLibraryDay(null); }}>
-                📚 Library
-                {libraryDays.length > 0 && <span className="hdr-badge">{libraryDays.length}</span>}
+              <span className="feed-tag">{feed.tag}</span>
+              {!feed.builtin && (
+                <button type="button" className="feed-remove" onClick={() => removeFeed(feed.id)} title="Remove" aria-label={`Remove ${feed.name}`}>×</button>
+              )}
+            </div>
+          ))}
+          <div className="add-feed-form">
+            <div className="add-feed-row">
+              <input className="add-feed-input" placeholder="Source name (e.g. Krebs On Security)" value={newName} onChange={e => setNewName(e.target.value)} />
+            </div>
+            <div className="add-feed-row">
+              <input className="add-feed-input" placeholder="RSS/Atom feed URL" value={newUrl} onChange={e => setNewUrl(e.target.value)} />
+              <button type="button" className="add-feed-btn" onClick={addFeed}>Add</button>
+            </div>
+            {addError && <p className="add-feed-error">{addError}</p>}
+          </div>
+
+          <div className="ai-section">
+            <p className="ai-section-title">AI Provider</p>
+            <div className="ai-provider-row">
+              <button type="button" className={`ai-provider-btn${aiConfig.provider === "anthropic" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "anthropic" })}>
+                ☁ Anthropic (Claude)
               </button>
-              <button className={`hdr-btn${showSources ? " active" : ""}`} onClick={() => { setShowSources(s => !s); setShowLibrary(false); setLibraryDay(null); }}>
-                ⚙ Sources
-                <span className="hdr-badge">{enabledCount}</span>
+              <button type="button" className={`ai-provider-btn${aiConfig.provider === "local" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "local" })}>
+                🖥 Local LLM
               </button>
             </div>
-          </div>
-          <h1 className="masthead-title">Morning Brief</h1>
-          <hr className="masthead-rule-top" />
-          <hr className="masthead-rule-thin" />
-          <p className="masthead-sub">{sourcesLabel}</p>
-          <p className="masthead-byline">By Rikard Zelin &amp; Claude</p>
-
-
-        </header>
-
-        {/* ── Sources panel ── */}
-        {showSources && (
-          <div className="panel">
-            <p className="panel-title">Manage Sources</p>
-            {feeds.map(feed => (
-              <div className="feed-row" key={feed.id}>
-                <label className="feed-toggle">
-                  <input type="checkbox" checked={feed.enabled} onChange={() => toggleFeed(feed.id)} />
-                  <div className="feed-toggle-track"><div className="feed-toggle-thumb" /></div>
-                </label>
-                <div className="feed-info">
-                  <div className="feed-name">{feed.name}</div>
-                  <div className="feed-url">{feed.url}</div>
+            {aiConfig.provider === "anthropic" && (
+              <>
+                <p className="ai-field-label">Model</p>
+                <div className="ai-field-row">
+                  {claudeModels.length > 0
+                    ? <select className="add-feed-input" value={aiConfig.claudeModel || ""} onChange={e => updateAiConfig({ ...aiConfig, claudeModel: e.target.value })}>
+                        {claudeModels.map(id => <option key={id} value={id}>{modelLabel(id)}</option>)}
+                      </select>
+                    : <input className="add-feed-input" placeholder={`e.g. ${DEFAULT_CLAUDE_MODEL}`} value={aiConfig.claudeModel || ""} onChange={e => updateAiConfig({ ...aiConfig, claudeModel: e.target.value })} />
+                  }
                 </div>
-                <span className="feed-tag">{feed.tag}</span>
-                {!feed.builtin && (
-                  <button className="feed-remove" onClick={() => removeFeed(feed.id)} title="Remove">×</button>
-                )}
-              </div>
-            ))}
-            <div className="add-feed-form">
-              <div className="add-feed-row">
-                <input className="add-feed-input" placeholder="Source name (e.g. Krebs On Security)" value={newName} onChange={e => setNewName(e.target.value)} />
-              </div>
-              <div className="add-feed-row">
-                <input className="add-feed-input" placeholder="RSS/Atom feed URL" value={newUrl} onChange={e => setNewUrl(e.target.value)} />
-                <button className="add-feed-btn" onClick={addFeed}>Add</button>
-              </div>
-              {addError && <p className="add-feed-error">{addError}</p>}
-            </div>
-
-            {/* ── Clear data ── */}
-            <div className="clear-data-section">
-              <p className="clear-data-label">Reset</p>
-              <div className="clear-data-row">
-                <button className="clear-btn danger" onClick={() => {
-                  clearSeenCache();
-                  setClearMsg("Read history cleared — all articles will show as new.");
-                  setTimeout(() => setClearMsg(""), 4000);
-                }}>
-                  Clear read history
-                </button>
-                <button className="clear-btn danger" onClick={() => {
-                  localStorage.removeItem("digest:library_v1");
-                  setLibrary({});
-                  setClearMsg("Library cleared.");
-                  setTimeout(() => setClearMsg(""), 4000);
-                }}>
-                  Clear library
-                </button>
-              </div>
-              {clearMsg && <p style={{fontSize:"0.72rem", color:"#5a8a5a", marginTop:"0.6rem"}}>{clearMsg}</p>}
-            </div>
-          </div>
-        )}
-
-        {/* ── Library panel ── */}
-        {showLibrary && (
-          <div className="panel">
-            {!libraryDay ? (
-              <>
-                <p className="panel-title">Past Digests</p>
-                {libraryDays.length === 0
-                  ? <p className="library-empty">No past digests yet — they'll appear here after your first fetch.</p>
-                  : (
-                    <div className="library-days">
-                      {libraryDays.map(key => (
-                        <button key={key} className={`library-day-btn${libraryDay === key ? " selected" : ""}`} onClick={() => openLibraryDay(key)}>
-                          <span>{fmtLibraryDate(key)}</span>
-                          <span className="library-day-stats">
-                            {library[key].stats?.newCount || 0} articles · {library[key].stats?.topicCount || 0} topics
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )
-                }
               </>
-            ) : (
+            )}
+            {aiConfig.provider === "local" && (
               <>
-                <button className="library-back" onClick={() => setLibraryDay(null)}>← All dates</button>
-                <p className="library-day-heading">{libraryEntry.date}</p>
-                <p className="library-day-sub">{libraryEntry.stats?.newCount} articles · {libraryEntry.stats?.topicCount} topics</p>
+                <p className="ai-field-label">Server URL</p>
+                <div className="ai-field-row">
+                  <input className="add-feed-input" placeholder="http://192.168.1.x:11434" value={aiConfig.localUrl} onChange={e => updateAiConfig({ ...aiConfig, localUrl: e.target.value })} />
+                </div>
+                <p className="ai-field-label">Model name</p>
+                <div className="ai-field-row">
+                  <input className="add-feed-input" placeholder="e.g. llama3, mistral, gemma3" value={aiConfig.model} onChange={e => updateAiConfig({ ...aiConfig, model: e.target.value })} />
+                </div>
+                <p className="ai-field-label">API Key <span style={{fontStyle:"italic", textTransform:"none", letterSpacing:0}}>(optional)</span></p>
+                <div className="ai-field-row">
+                  <input className="add-feed-input" type="password" placeholder="Leave blank if not required" value={aiConfig.apiKey || ""} onChange={e => updateAiConfig({ ...aiConfig, apiKey: e.target.value })} />
+                </div>
+                <p className="ai-help">
+                  Works with Ollama (<code>ollama serve</code>) or Open-WebUI.<br/>
+                  The server must be reachable from this machine.
+                </p>
+              </>
+            )}
+          </div>
 
-                {/* Top 3 from that day */}
-                {libraryEntry.top3?.length > 0 && (
-                  <div style={{marginBottom:"1.8rem"}}>
-                    <h2 className="top3-header"><span className="top3-star">★</span> Must-reads</h2>
-                    <div className="top3-cards">
-                      {libraryEntry.top3.map((item, i) => (
-                        <div className="top3-card" key={item.id || i}>
-                          <p className="top3-rank">#{i + 1} Must-read</p>
-                          <div className="article-meta">
-                            <span className="source-tag">{item.sourceTag}</span>
-                            <span className="article-date">{fmtDate(item.pubDate)}</span>
-                          </div>
-                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                          <p className="article-summary">{item.summary}</p>
-                        </div>
-                      ))}
-                    </div>
+          <div className="clear-data-section">
+            <p className="clear-data-label">Reset</p>
+            <div className="clear-data-row">
+              <button type="button" className="clear-btn danger" onClick={() => {
+                localStorage.removeItem(SEEN_KEY);
+                setClearMsg("Read history cleared — all articles will show as new.");
+                setTimeout(() => setClearMsg(""), 4000);
+              }}>
+                Clear read history
+              </button>
+              <button type="button" className="clear-btn danger" onClick={() => {
+                localStorage.removeItem(LIBRARY_KEY);
+                setLibrary({});
+                setClearMsg("Library cleared.");
+                setTimeout(() => setClearMsg(""), 4000);
+              }}>
+                Clear library
+              </button>
+            </div>
+            {clearMsg && <p className="clear-msg">{clearMsg}</p>}
+          </div>
+        </div>
+      )}
+
+      {showLibrary && (
+        <div className="panel">
+          {!libraryDay ? (
+            <>
+              <p className="panel-title">Past Digests</p>
+              {libraryDays.length === 0
+                ? <p className="library-empty">No past digests yet — they'll appear here after your first fetch.</p>
+                : (
+                  <div className="library-days">
+                    {libraryDays.map(key => (
+                      <button type="button" key={key} className="library-day-btn" onClick={() => openLibraryDay(key)}>
+                        <span>{fmtLibraryDate(key)}</span>
+                        <span className="library-day-stats">
+                          {library[key].stats?.newCount || 0} articles · {library[key].stats?.topicCount || 0} topics
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                )}
+                )
+              }
+            </>
+          ) : (
+            <>
+              <button type="button" className="library-back" onClick={() => setLibraryDay(null)}>← All dates</button>
+              <p className="library-day-heading">{libraryEntry.date}</p>
+              <p className="library-day-sub">{libraryEntry.stats?.newCount} articles · {libraryEntry.stats?.topicCount} topics</p>
 
-                {/* Topic groups from that day */}
-                {libraryEntry.groups?.map(({ topic, items }) => {
-                  const collapsed = collapsedTopics.has(topic);
-                  return (
-                    <section className="topic-section" key={topic} style={{marginBottom:"1.8rem"}}>
-                      <h2 className="topic-header" onClick={() => toggleTopic(topic)}>
-                        {topic}<span className="topic-count">{items.length}</span>
-                        <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
-                      </h2>
-                      {!collapsed && (
-                        <div className="article-grid">
-                          {items.map(item => (
-                            <article className="article" key={item.id}>
-                              <div className="article-meta">
-                                <span className="source-tag">{item.sourceTag}</span>
-                                <span className="article-date">{fmtDate(item.pubDate)}</span>
-                              </div>
-                              <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                              <p className="article-summary">{item.summary}</p>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        )}
+              {libraryEntry.top3?.length > 0 && (
+                <div style={{marginBottom:"1.8rem"}}>
+                  <h2 className="top3-header"><span className="top3-star">★</span> Must-reads</h2>
+                  <div className="top3-cards">
+                    {libraryEntry.top3.map((item, i) => (
+                      <div className="top3-card" key={item.id || i}>
+                        <p className="top3-rank">#{i + 1} Must-read</p>
+                        <ArticleBody item={item} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-        {/* ── Idle ── */}
-        {phase === "idle" && (
-          <div className="idle-wrap">
-            <p className="idle-greeting">Good morning.</p>
-            <p className="idle-sub">
-              Ready to fetch today's articles from {enabledCount} source{enabledCount !== 1 ? "s" : ""}<br />
-              and summarise everything with AI.
-            </p>
-            <button className="fetch-btn" onClick={run}>Fetch Today's Brief</button>
-          </div>
-        )}
+              {libraryEntry.groups?.map(({ topic, items }) => (
+                <TopicSection
+                  key={topic}
+                  topic={topic}
+                  items={items}
+                  collapsed={collapsedTopics.has(topic)}
+                  onToggle={toggleTopic}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
-        {/* ── Loading ── */}
-        {isLoading && (
-          <div className="status-wrap">
-            <div className="spinner" />
-            <p className="status-label">{phase === "processing" ? "Summarising with AI…" : "Fetching feeds…"}</p>
-          </div>
-        )}
+      {phase === "idle" && (
+        <div className="idle-wrap">
+          <p className="idle-greeting">Good morning.</p>
+          <p className="idle-sub">
+            Ready to fetch today's articles from {enabledCount} source{enabledCount !== 1 ? "s" : ""}<br />
+            and summarise everything with AI.
+          </p>
+          <button type="button" className="fetch-btn" onClick={run} disabled={isLoading}>Fetch Today's Brief</button>
+        </div>
+      )}
 
-        {/* ── Error ── */}
-        {phase === "error" && (
-          <div className="status-wrap">
-            <p className="err-head">Something went wrong</p>
-            <p className="err-detail">{errMsg}</p>
-            <button className="fetch-btn" onClick={run}>Try Again</button>
-          </div>
-        )}
+      {isLoading && (
+        <div className="status-wrap">
+          <div className="spinner" />
+          <p className="status-label">{phase === "processing" ? "Summarising with AI…" : "Fetching feeds…"}</p>
+        </div>
+      )}
 
-        {/* ── All caught up ── */}
-        {phase === "done" && stats?.newCount === 0 && (
-          <div className="status-wrap">
-            <p className="caught-up">You're all caught up.</p>
-            <p className="caught-up-sub">No new articles since your last visit.</p>
-            <button className="fetch-btn" onClick={run}>Check Again</button>
-            {debugLog.length > 0 && (
-              <div style={{marginTop:"1.8rem", textAlign:"left", maxWidth:"460px", margin:"1.8rem auto 0"}}>
-                <p style={{fontSize:"0.6rem", letterSpacing:"0.15em", textTransform:"uppercase", color:"#9a8f7a", marginBottom:"0.5rem"}}>Fetch diagnostics</p>
-                {debugLog.map((line, i) => (
-                  <p key={i} style={{fontSize:"0.72rem", color: line.startsWith("✗") ? "#7a1e1e" : "#4a4132", lineHeight:"1.7", fontFamily:"monospace"}}>{line}</p>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+      {phase === "error" && (
+        <div className="status-wrap">
+          <p className="err-head">Something went wrong</p>
+          <p className="err-detail">{errMsg}</p>
+          <button type="button" className="fetch-btn" onClick={run} disabled={isLoading}>Try Again</button>
+        </div>
+      )}
 
-        {/* ── Results ── */}
-        {phase === "done" && newGroups.length > 0 && (
-          <>
-            <div className="stats-bar">
-              <span>{stats.newCount} new article{stats.newCount !== 1 ? "s" : ""}</span>
-              <span>{stats.topicCount} topic{stats.topicCount !== 1 ? "s" : ""}</span>
+      {phase === "done" && stats?.newCount === 0 && (
+        <div className="status-wrap">
+          <p className="caught-up">You're all caught up.</p>
+          <p className="caught-up-sub">No new articles since your last visit.</p>
+          <button type="button" className="fetch-btn" onClick={run} disabled={isLoading}>Check Again</button>
+          {debugLog.length > 0 && (
+            <div className="diagnostics">
+              <p className="diagnostics-label">Fetch diagnostics</p>
+              {debugLog.map((line, i) => (
+                <p key={i} className={`diagnostics-line${line.startsWith("✗") ? " fail" : ""}`}>{line}</p>
+              ))}
             </div>
+          )}
+        </div>
+      )}
 
-            {/* Top 3 must-reads */}
-            {top3.length > 0 && (
-              <div className="top3-section">
-                <h2 className="top3-header"><span className="top3-star">★</span> Must-reads today</h2>
-                <div className="top3-cards">
+      {phase === "done" && newGroups.length > 0 && (
+        <>
+          <div className="stats-bar">
+            <span>{stats.newCount} new article{stats.newCount !== 1 ? "s" : ""}</span>
+            <span>{stats.topicCount} topic{stats.topicCount !== 1 ? "s" : ""}</span>
+          </div>
+
+          {top3.length > 0 && (
+            <div className="top3-section">
+              <h2 className="top3-header"><span className="top3-star">★</span> Must-reads today</h2>
+              <div className="top3-cards">
                 {top3.map((item, i) => (
                   <div className="top3-card" key={item.id}>
                     <p className="top3-rank">#{i + 1} Must-read</p>
-                    <div className="article-meta">
-                      <span className="source-tag">{item.sourceTag}</span>
-                      <span className="article-date">{fmtDate(item.pubDate)}</span>
-                    </div>
-                    <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                    <p className="article-summary">{item.summary}</p>
+                    <ArticleBody item={item} />
                   </div>
                 ))}
-                </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* All articles by topic */}
-            {newGroups.map(({ topic, items }) => {
-              const collapsed = collapsedTopics.has(topic);
-              return (
-                <section className="topic-section" key={topic}>
-                  <h2 className="topic-header" onClick={() => toggleTopic(topic)}>
-                    {topic}<span className="topic-count">{items.length}</span>
-                    <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
-                  </h2>
-                  {!collapsed && (
-                    <div className="article-grid">
-                      {items.map(item => (
-                        <article className="article" key={item.id}>
-                          <div className="article-meta">
-                            <span className="source-tag">{item.sourceTag}</span>
-                            <span className="article-date">{fmtDate(item.pubDate)}</span>
-                          </div>
-                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                          <p className="article-summary">{item.summary}</p>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </>
-        )}
+          {newGroups.map(({ topic, items }) => (
+            <TopicSection
+              key={topic}
+              topic={topic}
+              items={items}
+              collapsed={collapsedTopics.has(topic)}
+              onToggle={toggleTopic}
+            />
+          ))}
+        </>
+      )}
 
-        {/* ── Footer ── */}
-        <footer className="digest-footer">
-          <span>Morning Brief · Rikard Zelin &amp; Claude</span>
-          {phase === "done" && <button className="refresh-btn" onClick={run}>Fetch Again</button>}
-        </footer>
-      </div>
-    </>
+      <footer className="digest-footer">
+        <span>Morning Brief · Rikard Zelin &amp; Claude</span>
+        {phase === "done" && <button type="button" className="refresh-btn" onClick={run} disabled={isLoading}>Fetch Again</button>}
+      </footer>
+    </div>
   );
 }
