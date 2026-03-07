@@ -184,10 +184,8 @@ export default function DigestApp() {
   const [phase,       setPhase]       = useState(() => loadLibrary()[todayKey()] ? "done" : "idle");
   const [newGroups,   setNewGroups]   = useState(() => loadLibrary()[todayKey()]?.groups || []);
   const [top3,        setTop3]        = useState(() => loadLibrary()[todayKey()]?.top3   || []);
-  const [seenItems,   setSeenItems]   = useState([]);
   const [stats,       setStats]       = useState(() => loadLibrary()[todayKey()]?.stats  || null);
   const [errMsg,      setErrMsg]      = useState("");
-  const [showSeen,    setShowSeen]    = useState(false);
   const [columns,     setColumns]     = useState(() => Number(localStorage.getItem("digest:columns")) || 1);
 
   // Sources panel
@@ -239,7 +237,7 @@ export default function DigestApp() {
     }
 
     setPhase("fetching"); setErrMsg(""); setNewGroups([]); setTop3([]);
-    setSeenItems([]); setStats(null); setShowSeen(false);
+    setStats(null);
 
     try {
       const seen = loadSeen();
@@ -263,11 +261,10 @@ export default function DigestApp() {
       // 2. Deduplicate
       const deduped = allItems.reduce((acc, it) => acc.find(x => x.id === it.id) ? acc : [...acc, it], []);
 
-      // Split into fresh (not yet seen) vs already-seen
+      // Split into fresh (not yet seen)
       const freshItems = deduped.filter(it => !seen.has(it.id)).slice(0, 24);
-      const seenToday  = deduped.filter(it =>  seen.has(it.id)).slice(0, 20);
 
-      fetchLog.push(`Total: ${deduped.length} | Fresh: ${freshItems.length} | Seen: ${seenToday.length}`);
+      fetchLog.push(`Total: ${deduped.length} | Fresh: ${freshItems.length}`);
       console.log('[fetch] Summary:', fetchLog.join(' | '));
       setDebugLog(fetchLog);
 
@@ -309,7 +306,6 @@ export default function DigestApp() {
 
       setNewGroups(grouped);
       setTop3(pickedTop3);
-      setSeenItems(seenToday);
       setStats({ newCount: processed.length, topicCount: grouped.length });
       setPhase("done");
     } catch (e) {
@@ -432,8 +428,8 @@ export default function DigestApp() {
         .two-col .topic-section { max-width: 1100px; }
         .two-col .stats-bar     { max-width: 1100px; }
         .two-col .top3-section  { max-width: 1100px; }
-        .two-col .seen-section  { max-width: 1100px; }
         .two-col .digest-footer { max-width: 1100px; }
+        .two-col .panel         { max-width: 1100px; }
         .two-col .top3-cards    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 2rem; }
         .two-col .article-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
         .two-col .article       { break-inside: avoid; }
@@ -493,17 +489,6 @@ export default function DigestApp() {
         .article-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 600; line-height: 1.35; color: #1c1912; text-decoration: none; display: block; margin-bottom: 0.5rem; transition: color 0.15s; }
         .article-title:hover { color: #5a3e1a; }
         .article-summary { font-size: 0.88rem; line-height: 1.7; color: #4a4132; }
-
-        /* ── Previously read ── */
-        .seen-section { max-width: 720px; margin: 2rem auto 0; }
-        .seen-toggle { display: flex; align-items: center; gap: 0.7rem; width: 100%; background: none; border: none; border-top: 1px dashed #c8bda8; padding: 1rem 0 0.5rem; cursor: pointer; font-family: 'Lora', serif; font-size: 0.62rem; letter-spacing: 0.2em; text-transform: uppercase; color: #9a8f7a; text-align: left; transition: color 0.15s; }
-        .seen-toggle:hover { color: #5a4e38; }
-        .seen-chevron { display: inline-block; transition: transform 0.2s; }
-        .seen-chevron.open { transform: rotate(180deg); }
-        .seen-article { padding: 0.65rem 0; border-bottom: 1px solid #ece6da; opacity: 0.42; }
-        .seen-article:last-child { border-bottom: none; }
-        .seen-article .article-title { font-size: 0.95rem; font-weight: 400; color: #4a4132; margin-bottom: 0; }
-        .seen-article .article-title:hover { color: #1c1912; }
 
         /* ── Footer ── */
         .digest-footer { max-width: 720px; margin: 3rem auto 0; padding-top: 1.4rem; border-top: 3px double #c8bda8; display: flex; align-items: center; justify-content: space-between; font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; }
@@ -627,17 +612,19 @@ export default function DigestApp() {
                 {libraryEntry.top3?.length > 0 && (
                   <div style={{marginBottom:"1.8rem"}}>
                     <h2 className="top3-header"><span className="top3-star">★</span> Must-reads</h2>
-                    {libraryEntry.top3.map((item, i) => (
-                      <div className="top3-card" key={item.id || i}>
-                        <p className="top3-rank">#{i + 1} Must-read</p>
-                        <div className="article-meta">
-                          <span className="source-tag">{item.sourceTag}</span>
-                          <span className="article-date">{fmtDate(item.pubDate)}</span>
+                    <div className="top3-cards">
+                      {libraryEntry.top3.map((item, i) => (
+                        <div className="top3-card" key={item.id || i}>
+                          <p className="top3-rank">#{i + 1} Must-read</p>
+                          <div className="article-meta">
+                            <span className="source-tag">{item.sourceTag}</span>
+                            <span className="article-date">{fmtDate(item.pubDate)}</span>
+                          </div>
+                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
+                          <p className="article-summary">{item.summary}</p>
                         </div>
-                        <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                        <p className="article-summary">{item.summary}</p>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -645,21 +632,25 @@ export default function DigestApp() {
                 {libraryEntry.groups?.map(({ topic, items }) => {
                   const collapsed = collapsedTopics.has(topic);
                   return (
-                    <section key={topic} style={{marginBottom:"1.8rem"}}>
+                    <section className="topic-section" key={topic} style={{marginBottom:"1.8rem"}}>
                       <h2 className="topic-header" onClick={() => toggleTopic(topic)}>
                         {topic}<span className="topic-count">{items.length}</span>
                         <span className={`topic-chevron${collapsed ? " collapsed" : ""}`}>▾</span>
                       </h2>
-                      {!collapsed && items.map(item => (
-                        <article className="article" key={item.id}>
-                          <div className="article-meta">
-                            <span className="source-tag">{item.sourceTag}</span>
-                            <span className="article-date">{fmtDate(item.pubDate)}</span>
-                          </div>
-                          <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                          <p className="article-summary">{item.summary}</p>
-                        </article>
-                      ))}
+                      {!collapsed && (
+                        <div className="article-grid">
+                          {items.map(item => (
+                            <article className="article" key={item.id}>
+                              <div className="article-meta">
+                                <span className="source-tag">{item.sourceTag}</span>
+                                <span className="article-date">{fmtDate(item.pubDate)}</span>
+                              </div>
+                              <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
+                              <p className="article-summary">{item.summary}</p>
+                            </article>
+                          ))}
+                        </div>
+                      )}
                     </section>
                   );
                 })}
@@ -769,29 +760,6 @@ export default function DigestApp() {
               );
             })}
           </>
-        )}
-
-        {/* ── Previously read ── */}
-        {phase === "done" && seenItems.length > 0 && (
-          <div className="seen-section">
-            <button className="seen-toggle" onClick={() => setShowSeen(s => !s)}>
-              <span className={`seen-chevron${showSeen ? " open" : ""}`}>▾</span>
-              Previously read ({seenItems.length})
-            </button>
-            {showSeen && (
-              <div>
-                {seenItems.map(item => (
-                  <article className="seen-article" key={item.id}>
-                    <div className="article-meta">
-                      <span className="source-tag">{item.sourceTag}</span>
-                      <span className="article-date">{fmtDate(item.pubDate)}</span>
-                    </div>
-                    <a className="article-title" href={item.link} target="_blank" rel="noopener noreferrer">{item.title}</a>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
         )}
 
         {/* ── Footer ── */}
