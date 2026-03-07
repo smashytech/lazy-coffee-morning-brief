@@ -187,6 +187,11 @@ export default function DigestApp() {
   const [stats,       setStats]       = useState(() => loadLibrary()[todayKey()]?.stats  || null);
   const [errMsg,      setErrMsg]      = useState("");
   const [columns,     setColumns]     = useState(() => Number(localStorage.getItem("digest:columns")) || 1);
+  const [theme,       setTheme]       = useState(() => {
+    const t = localStorage.getItem("digest:theme");
+    if (t) return t;
+    return localStorage.getItem("digest:dark") === "1" ? "dark" : "light";
+  });
 
   // Sources panel
   const [showSources, setShowSources] = useState(false);
@@ -492,15 +497,170 @@ export default function DigestApp() {
 
         /* ── Footer ── */
         .digest-footer { max-width: 720px; margin: 3rem auto 0; padding-top: 1.4rem; border-top: 3px double #c8bda8; display: flex; align-items: center; justify-content: space-between; font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; }
+
+        /* ── Dark mode ── */
+        .dark { background: #131110; color: #ede8df; }
+        .dark .masthead-meta  { color: #5a5448; }
+        .dark .masthead-title { color: #ede8df; }
+        .dark .masthead-rule-top  { border-top-color: #ede8df; }
+        .dark .masthead-rule-thin { border-top-color: #ede8df; }
+        .dark .masthead-sub    { color: #5a5448; }
+        .dark .masthead-byline { color: #3e3830; }
+        .dark .hdr-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .hdr-btn:hover  { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .hdr-btn.active { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .hdr-badge { background: #ede8df; color: #131110; }
+        .dark .hdr-btn.active .hdr-badge { background: #131110; color: #ede8df; }
+        .dark .col-toggle { border-color: #3a342a; }
+        .dark .col-btn { color: #6a6050; }
+        .dark .col-btn:hover  { background: #2a2520; color: #ede8df; }
+        .dark .col-btn.active { background: #ede8df; color: #131110; }
+        .dark .panel { border-color: #2e2820; background: #1b1814; }
+        .dark .panel-title { color: #5a5448; }
+        .dark .feed-row { border-bottom-color: #2a2520; }
+        .dark .feed-toggle-track { background: #3a342a; }
+        .dark .feed-toggle input:checked ~ .feed-toggle-track { background: #ede8df; }
+        .dark .feed-toggle-thumb { background: #131110; }
+        .dark .feed-name { color: #ede8df; }
+        .dark .feed-url  { color: #5a5448; }
+        .dark .feed-tag  { background: #2a2520; color: #9a8e7a; }
+        .dark .feed-remove { color: #3a342a; }
+        .dark .feed-remove:hover { color: #d44444; }
+        .dark .add-feed-input { background: #131110; border-color: #3a342a; color: #ede8df; }
+        .dark .add-feed-input:focus { border-color: #6a6050; }
+        .dark .add-feed-input::placeholder { color: #3e3830; }
+        .dark .add-feed-btn { background: #ede8df; color: #131110; }
+        .dark .add-feed-error { color: #d44444; }
+        .dark .clear-data-section { border-top-color: #2e2820; }
+        .dark .clear-data-label { color: #5a5448; }
+        .dark .clear-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .clear-btn:hover { border-color: #d44444; color: #d44444; }
+        .dark .clear-btn.danger:hover { background: #d44444; color: #ede8df; border-color: #d44444; }
+        .dark .library-days { }
+        .dark .library-day-btn { border-bottom-color: #2a2520; color: #9a8e7a; }
+        .dark .library-day-btn:hover   { color: #ede8df; }
+        .dark .library-day-btn.selected { color: #ede8df; }
+        .dark .library-day-stats { color: #3e3830; }
+        .dark .library-empty { color: #3e3830; }
+        .dark .library-back { color: #5a5448; }
+        .dark .library-back:hover { color: #ede8df; }
+        .dark .library-day-heading { color: #ede8df; }
+        .dark .library-day-sub { color: #5a5448; }
+        .dark .stats-bar { color: #5a5448; }
+        .dark .topic-header { color: #5a5448; border-bottom-color: #2e2820; }
+        .dark .topic-header:hover { color: #ede8df; }
+        .dark .topic-count { background: #ede8df; color: #131110; }
+        .dark .article { border-bottom-color: #2a2520; }
+        .dark .source-tag { background: #2a2520; color: #9a8e7a; }
+        .dark .article-date { color: #3e3830; }
+        .dark .article-title { color: #ede8df; }
+        .dark .article-title:hover { color: #c8a870; }
+        .dark .article-summary { color: #8a7e6e; }
+        .dark .top3-header { color: #5a5448; border-bottom-color: #ede8df; }
+        .dark .top3-star  { color: #ede8df; }
+        .dark .top3-card  { border-bottom-color: #2a2520; border-left-color: #ede8df; }
+        .dark .top3-rank  { color: #3e3830; }
+        .dark .idle-greeting { color: #b0a48e; }
+        .dark .idle-sub { color: #5a5448; }
+        .dark .fetch-btn { background: #ede8df; color: #131110; }
+        .dark .refresh-btn { border-color: #5a5448; color: #8a7e6e; }
+        .dark .refresh-btn:hover { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .status-label { color: #5a5448; }
+        .dark .spinner { border-color: #2e2820; border-top-color: #ede8df; }
+        .dark .err-head { color: #d44444; }
+        .dark .err-detail { color: #5a5448; }
+        .dark .caught-up { color: #b0a48e; }
+        .dark .caught-up-sub { color: #5a5448; }
+        .dark .digest-footer { border-top-color: #2e2820; color: #3e3830; }
+
+        /* ── Geek / Terminal mode ── */
+        .geek { background: #000; color: #33ff33; }
+        .geek * { font-family: 'Courier New', Courier, monospace !important; font-style: normal !important; }
+        .geek::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.12) 3px, rgba(0,0,0,0.12) 4px); pointer-events: none; z-index: 9999; }
+        .geek .masthead-title { color: #33ff33; text-shadow: 0 0 18px #33ff33, 0 0 40px rgba(51,255,51,0.4); letter-spacing: 0.05em; }
+        .geek .masthead-meta  { color: #00b800; }
+        .geek .masthead-rule-top  { border-top-color: #33ff33; box-shadow: 0 0 8px #33ff33; }
+        .geek .masthead-rule-thin { border-top-color: #007700; }
+        .geek .masthead-sub    { color: #00b800; }
+        .geek .masthead-byline { color: #007700; }
+        .geek .hdr-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .hdr-btn:hover  { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .hdr-btn.active { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .hdr-badge { background: #33ff33; color: #000; }
+        .geek .hdr-btn.active .hdr-badge { background: #000; color: #33ff33; }
+        .geek .col-toggle { border-color: #33ff33; }
+        .geek .col-btn { color: #33ff33; }
+        .geek .col-btn:hover  { background: #002200; color: #33ff33; }
+        .geek .col-btn.active { background: #33ff33; color: #000; }
+        .geek .panel { border-color: #33ff33; background: #000; box-shadow: 0 0 16px rgba(51,255,51,0.12); }
+        .geek .panel-title { color: #00b800; }
+        .geek .feed-row { border-bottom-color: #002200; }
+        .geek .feed-toggle-track { background: #002200; }
+        .geek .feed-toggle input:checked ~ .feed-toggle-track { background: #33ff33; }
+        .geek .feed-toggle-thumb { background: #000; }
+        .geek .feed-name { color: #33ff33; }
+        .geek .feed-url  { color: #00b800; }
+        .geek .feed-tag  { background: #002200; color: #33ff33; }
+        .geek .feed-remove { color: #002200; }
+        .geek .feed-remove:hover { color: #ff3333; }
+        .geek .add-feed-input { background: #000; border-color: #33ff33; color: #33ff33; }
+        .geek .add-feed-input:focus { border-color: #33ff33; box-shadow: 0 0 6px #33ff33; }
+        .geek .add-feed-input::placeholder { color: #003300; }
+        .geek .add-feed-btn { background: #33ff33; color: #000; border: none; }
+        .geek .add-feed-error { color: #ff3333; }
+        .geek .clear-data-section { border-top-color: #002200; }
+        .geek .clear-data-label { color: #007700; }
+        .geek .clear-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .clear-btn:hover { border-color: #ff3333; color: #ff3333; }
+        .geek .clear-btn.danger:hover { background: #ff3333; color: #000; border-color: #ff3333; }
+        .geek .library-day-btn { border-bottom-color: #002200; color: #00b800; }
+        .geek .library-day-btn:hover   { color: #33ff33; }
+        .geek .library-day-btn.selected { color: #33ff33; }
+        .geek .library-day-stats { color: #007700; }
+        .geek .library-empty { color: #007700; }
+        .geek .library-back { color: #00b800; }
+        .geek .library-back:hover { color: #33ff33; }
+        .geek .library-day-heading { color: #33ff33; text-shadow: 0 0 8px #33ff33; }
+        .geek .library-day-sub { color: #00b800; }
+        .geek .stats-bar { color: #007700; }
+        .geek .topic-header { color: #00b800; border-bottom-color: #002200; }
+        .geek .topic-header:hover { color: #33ff33; }
+        .geek .topic-count { background: #33ff33; color: #000; }
+        .geek .article { border-bottom-color: #002200; }
+        .geek .source-tag { background: #002200; color: #33ff33; }
+        .geek .article-date { color: #007700; }
+        .geek .article-title { color: #33ff33; text-shadow: 0 0 5px rgba(51,255,51,0.5); }
+        .geek .article-title:hover { color: #fff; text-shadow: 0 0 10px #fff; }
+        .geek .article-summary { color: #00b800; }
+        .geek .top3-header { color: #00b800; border-bottom-color: #33ff33; }
+        .geek .top3-star  { color: #33ff33; text-shadow: 0 0 10px #33ff33; }
+        .geek .top3-card  { border-bottom-color: #002200; border-left-color: #33ff33; box-shadow: -4px 0 12px rgba(51,255,51,0.2); }
+        .geek .top3-rank  { color: #007700; }
+        .geek .idle-greeting { color: #33ff33; text-shadow: 0 0 12px #33ff33; }
+        .geek .idle-sub { color: #00b800; }
+        .geek .fetch-btn { background: #33ff33; color: #000; }
+        .geek .fetch-btn:hover { background: #000; color: #33ff33; border: 1px solid #33ff33; opacity: 1; }
+        .geek .refresh-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .refresh-btn:hover { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .status-label { color: #33ff33; text-shadow: 0 0 6px #33ff33; }
+        .geek .spinner { border-color: #002200; border-top-color: #33ff33; box-shadow: 0 0 8px rgba(51,255,51,0.4); }
+        .geek .err-head { color: #ff3333; text-shadow: 0 0 8px #ff3333; }
+        .geek .err-detail { color: #00b800; }
+        .geek .caught-up { color: #33ff33; text-shadow: 0 0 12px #33ff33; }
+        .geek .caught-up-sub { color: #00b800; }
+        .geek .digest-footer { border-top-color: #002200; color: #007700; }
       `}</style>
 
-      <div className={`digest-wrap${columns === 2 ? " two-col" : ""}`}>
+      <div className={`digest-wrap${columns === 2 ? " two-col" : ""}${theme === "dark" ? " dark" : ""}${theme === "geek" ? " geek" : ""}`}>
 
         {/* ── Masthead ── */}
         <header className="masthead">
           <div className="masthead-top">
             <p className="masthead-meta">{TODAY}</p>
             <div className="masthead-actions">
+              <button className={`hdr-btn${theme !== "light" ? " active" : ""}`} onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "geek" : "light"; setTheme(next); localStorage.setItem("digest:theme", next); }}>
+                {theme === "geek" ? "☀ Light" : theme === "dark" ? "▣ Geek" : "☾ Dark"}
+              </button>
               <div className="col-toggle">
                 <button className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => { setColumns(1); localStorage.setItem("digest:columns", 1); }} title="Single column">▬</button>
                 <button className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => { setColumns(2); localStorage.setItem("digest:columns", 2); }} title="Two columns">⊟</button>
