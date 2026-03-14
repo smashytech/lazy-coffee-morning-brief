@@ -8,15 +8,15 @@ Built by **Rikard Zelin & Claude**.
 
 ## Features
 
-- 📰 Fetches from The Hacker News, BleepingComputer, and Risky Business (fully configurable)
-- 🤖 AI summarisation via **Anthropic Claude** or a **local LLM** (Ollama / Open-WebUI)
-- ⭐ Top 3 must-reads picked automatically each day
-- 🗂 Topics grouped and collapsible
-- 📚 Library — every past digest saved and browsable
-- ✅ Read-history tracking — no duplicate articles across days
-- ☾ Light, Dark, and Geek (green terminal) themes
-- ⊟ Single or two-column layout
-- ⚙ Add/remove RSS sources from the UI
+-  Fetches from The Hacker News, BleepingComputer, and Risky Business (fully configurable)
+-  AI summarisation via **Anthropic Claude** or a **local LLM** (Ollama / Open-WebUI)
+-  Top 3 must-reads picked automatically each day
+-  Topics grouped and collapsible
+-  Library — every past digest saved and browsable
+-  Read-history tracking — no duplicate articles across days
+-  Light, Dark, and Geek (green terminal) themes
+-  Single or two-column layout
+-  Add/remove RSS sources from the UI
 
 ---
 
