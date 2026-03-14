@@ -9,7 +9,16 @@ const DEFAULT_FEEDS = [
 
 const FEEDS_KEY   = "digest:feeds_v1";
 const SEEN_KEY    = "digest:seen_v2";
-const LIBRARY_KEY = "digest:library_v1";  // stores past digests by date string
+const LIBRARY_KEY   = "digest:library_v1";  // stores past digests by date string
+const AI_CONFIG_KEY = "digest:ai_config_v1";
+
+function loadAiConfig() {
+  try {
+    const r = localStorage.getItem(AI_CONFIG_KEY);
+    return r ? JSON.parse(r) : { provider: "anthropic", localUrl: "http://localhost:11434", model: "llama3", apiKey: "" };
+  } catch { return { provider: "anthropic", localUrl: "http://localhost:11434", model: "llama3", apiKey: "" }; }
+}
+function saveAiConfig(cfg) { localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(cfg)); }
 
 // ─── Storage helpers ───────────────────────────────────────────────────────────
 
@@ -121,18 +130,7 @@ async function fetchFeed(feed) {
 // We do everything in one API call to keep costs low.
 // Claude returns { summaries: [{index,summary,topic}], top3: [index,index,index] }
 
-async function aiProcess(items) {
-  const payload = items.map((it, i) =>
-    `[${i}] SOURCE: ${it.source}\nTITLE: ${it.title}\nBODY: ${it.description}`
-  ).join("\n\n---\n\n");
-
-  const res = await fetch("/anthropic/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      system: `You are a cybersecurity news editor. Given a list of articles:
+const SYSTEM_PROMPT = `You are a cybersecurity news editor. Given a list of articles:
 
 1. For each article write a 2–3 sentence plain-English summary and assign a short topic label (1–3 words, e.g. Ransomware, Vulnerabilities, Data Breach, Nation-State, Malware, Privacy, Podcast, Policy, Phishing, Cybercrime, AI Security, Zero-Day, Supply Chain).
 
@@ -146,19 +144,59 @@ Respond ONLY with a valid JSON object — no markdown fences, no extra text:
 {
   "summaries": [{"index":0,"summary":"...","topic":"..."},...],
   "top3": [index1, index2, index3]
-}`,
-      messages: [{ role: "user", content: payload }],
-    }),
-  });
+}`;
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${res.status}`);
+async function aiProcess(items, aiConfig) {
+  const payload = items.map((it, i) =>
+    `[${i}] SOURCE: ${it.source}\nTITLE: ${it.title}\nBODY: ${it.description}`
+  ).join("\n\n---\n\n");
+
+  if (aiConfig?.provider === "local") {
+    // OpenAI-compatible format — works with Ollama and Open-WebUI
+    const res = await fetch(`/localllm?url=${encodeURIComponent(aiConfig.localUrl)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(aiConfig.apiKey ? { "Authorization": `Bearer ${aiConfig.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: aiConfig.model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user",   content: payload },
+        ],
+        temperature: 0.3,
+        stream: false,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Local LLM error ${res.status}`);
+    }
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || "";
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+
+  } else {
+    // Anthropic format
+    const res = await fetch("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: payload }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `API error ${res.status}`);
+    }
+    const data = await res.json();
+    const text = data.content.map(c => c.text || "").join("");
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
   }
-
-  const data = await res.json();
-  const text = data.content.map(c => c.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
 // ─── Formatting helpers ────────────────────────────────────────────────────────
@@ -200,6 +238,7 @@ export default function DigestApp() {
   const [newUrl,      setNewUrl]      = useState("");
   const [addError,    setAddError]    = useState("");
   const [clearMsg,    setClearMsg]    = useState("");
+  const [aiConfig,    setAiConfig]    = useState(loadAiConfig);
   const [debugLog,    setDebugLog]    = useState([]);  // diagnostic messages shown during fetch
   const [collapsedTopics, setCollapsedTopics] = useState(new Set());
 
@@ -211,6 +250,7 @@ export default function DigestApp() {
   // ── Feed management ──────────────────────────────────────────────────────────
 
   function updateFeeds(next) { setFeeds(next); saveFeeds(next); }
+  function updateAiConfig(next) { setAiConfig(next); saveAiConfig(next); }
   function toggleFeed(id)    { updateFeeds(feeds.map(f => f.id === id ? { ...f, enabled: !f.enabled } : f)); }
   function removeFeed(id)    { updateFeeds(feeds.filter(f => f.id !== id)); }
 
@@ -277,7 +317,7 @@ export default function DigestApp() {
       let processed = [], pickedTop3 = [];
       if (freshItems.length > 0) {
         setPhase("processing");
-        const aiResult = await aiProcess(freshItems);
+        const aiResult = await aiProcess(freshItems, aiConfig);
 
         processed = (aiResult.summaries || [])
           .filter(r => r.index < freshItems.length)
@@ -498,6 +538,32 @@ export default function DigestApp() {
         /* ── Footer ── */
         .digest-footer { max-width: 720px; margin: 3rem auto 0; padding-top: 1.4rem; border-top: 3px double #c8bda8; display: flex; align-items: center; justify-content: space-between; font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; }
 
+        /* ── AI provider settings ── */
+        .ai-section { margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px solid #e8e1d4; }
+        .ai-section-title { font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; }
+        .ai-provider-row { display: flex; gap: 0.6rem; margin-bottom: 0.8rem; }
+        .ai-provider-btn { flex: 1; background: none; border: 1px solid #c8bda8; color: #7a6f5a; font-family: 'Lora', serif; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.6em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+        .ai-provider-btn.selected { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
+        .ai-provider-btn:hover:not(.selected) { border-color: #7a6f5a; color: #1c1912; }
+        .ai-field-label { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.3rem; }
+        .ai-field-row { display: flex; gap: 0.6rem; margin-bottom: 0.6rem; }
+
+        /* Dark mode AI section */
+        .dark .ai-section { border-top-color: #2e2820; }
+        .dark .ai-section-title { color: #5a5448; }
+        .dark .ai-provider-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .ai-provider-btn.selected { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .ai-provider-btn:hover:not(.selected) { border-color: #6a6050; color: #ede8df; }
+        .dark .ai-field-label { color: #5a5448; }
+
+        /* Geek mode AI section */
+        .geek .ai-section { border-top-color: #002200; }
+        .geek .ai-section-title { color: #00b800; }
+        .geek .ai-provider-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .ai-provider-btn.selected { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .ai-provider-btn:hover:not(.selected) { border-color: #33ff33; color: #33ff33; background: #002200; }
+        .geek .ai-field-label { color: #007700; }
+
         /* ── Dark mode ── */
         .dark { background: #131110; color: #ede8df; }
         .dark .masthead-meta  { color: #5a5448; }
@@ -713,6 +779,39 @@ export default function DigestApp() {
                 <button className="add-feed-btn" onClick={addFeed}>Add</button>
               </div>
               {addError && <p className="add-feed-error">{addError}</p>}
+            </div>
+
+            {/* ── AI Provider ── */}
+            <div className="ai-section">
+              <p className="ai-section-title">AI Provider</p>
+              <div className="ai-provider-row">
+                <button className={`ai-provider-btn${aiConfig.provider === "anthropic" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "anthropic" })}>
+                  ☁ Anthropic (Claude)
+                </button>
+                <button className={`ai-provider-btn${aiConfig.provider === "local" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "local" })}>
+                  🖥 Local LLM
+                </button>
+              </div>
+              {aiConfig.provider === "local" && (
+                <>
+                  <p className="ai-field-label">Server URL</p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" placeholder="http://192.168.1.x:11434" value={aiConfig.localUrl} onChange={e => updateAiConfig({ ...aiConfig, localUrl: e.target.value })} />
+                  </div>
+                  <p className="ai-field-label">Model name</p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" placeholder="e.g. llama3, mistral, gemma3" value={aiConfig.model} onChange={e => updateAiConfig({ ...aiConfig, model: e.target.value })} />
+                  </div>
+                  <p className="ai-field-label">API Key <span style={{fontStyle:"italic", textTransform:"none", letterSpacing:0}}>(optional)</span></p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" type="password" placeholder="Leave blank if not required" value={aiConfig.apiKey || ""} onChange={e => updateAiConfig({ ...aiConfig, apiKey: e.target.value })} />
+                  </div>
+                  <p style={{fontSize:"0.68rem", color:"#9a8f7a", lineHeight:"1.6"}}>
+                    Works with Ollama (<code>ollama serve</code>) or Open-WebUI.<br/>
+                    The server must be reachable from this machine.
+                  </p>
+                </>
+              )}
             </div>
 
             {/* ── Clear data ── */}

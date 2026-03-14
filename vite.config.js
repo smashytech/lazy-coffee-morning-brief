@@ -1,8 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// configureServer is a Vite PLUGIN HOOK, not a server config option.
-// It must live inside the plugins array to actually run.
 const proxyPlugin = {
   name: 'morning-brief-proxy',
   configureServer(server) {
@@ -39,10 +37,46 @@ const proxyPlugin = {
         return
       }
 
+      // ── Local LLM proxy (Ollama / Open-WebUI) ──────────────────────
+      // Accepts: POST /localllm?url=http://192.168.x.x:11434
+      // Forwards the request body to that server's /v1/chat/completions
+      if (req.url.startsWith('/localllm')) {
+        const qmark   = req.url.indexOf('?')
+        const params  = new URLSearchParams(qmark >= 0 ? req.url.slice(qmark + 1) : '')
+        const baseUrl = params.get('url')
+        if (!baseUrl) { res.writeHead(400); res.end('Missing ?url='); return }
+
+        const apiUrl = baseUrl.replace(/\/$/, '') + '/v1/chat/completions'
+        console.log(`[proxy/localllm] forwarding to: ${apiUrl}`)
+
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        const body = Buffer.concat(chunks)
+
+        try {
+          const upstream = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          })
+          const respBody = await upstream.text()
+          console.log(`[proxy/localllm] ${upstream.status}, ${respBody.length} bytes`)
+          res.writeHead(upstream.status, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(respBody)
+        } catch (err) {
+          console.error(`[proxy/localllm] FAILED:`, err.message)
+          res.writeHead(502); res.end(`Local LLM fetch failed: ${err.message}`)
+        }
+        return
+      }
+
       // ── Anthropic API proxy ─────────────────────────────────────────
       if (req.url.startsWith('/anthropic/')) {
         const apiKey = process.env.ANTHROPIC_API_KEY
-        const apiUrl = `https://api.anthropic.com${req.url.replace('/anthropic', '')}`
+        const apiUrl = 'https://api.anthropic.com' + req.url.replace('/anthropic', '')
         if (!apiKey) console.error('[proxy/anthropic] WARNING: ANTHROPIC_API_KEY not set!')
         else console.log('[proxy/anthropic] key:', apiKey.slice(0, 8) + '...')
 
