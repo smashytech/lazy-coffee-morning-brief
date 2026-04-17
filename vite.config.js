@@ -48,6 +48,40 @@ const proxyPlugin = {
 
         const apiUrl = baseUrl.replace(/\/$/, '') + '/v1/chat/completions'
         console.log(`[proxy/localllm] forwarding to: ${apiUrl}`)
+<<<<<<< HEAD
+=======
+
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        const body = Buffer.concat(chunks)
+
+        try {
+          const upstream = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          })
+          const respBody = await upstream.text()
+          console.log(`[proxy/localllm] ${upstream.status}, ${respBody.length} bytes`)
+          res.writeHead(upstream.status, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          })
+          res.end(respBody)
+        } catch (err) {
+          console.error(`[proxy/localllm] FAILED:`, err.message)
+          res.writeHead(502); res.end(`Local LLM fetch failed: ${err.message}`)
+        }
+        return
+      }
+
+      // ── Anthropic API proxy ─────────────────────────────────────────
+      if (req.url.startsWith('/anthropic/')) {
+        const apiKey = process.env.ANTHROPIC_API_KEY
+        const apiUrl = 'https://api.anthropic.com' + req.url.replace('/anthropic', '')
+        if (!apiKey) console.error('[proxy/anthropic] WARNING: ANTHROPIC_API_KEY not set!')
+        else console.log('[proxy/anthropic] key:', apiKey.slice(0, 8) + '...')
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
 
         const chunks = []
         for await (const chunk of req) chunks.push(chunk)

@@ -1,43 +1,97 @@
-# Morning Brief
+# ☕ Lazy Coffee Morning Brief
 
-A personal AI-powered news digest for The Hacker News, BleepingComputer, and Risky Business — plus any RSS/Atom feed you add yourself.
+A personal, newspaper-style cybersecurity news digest powered by Claude AI. Fetches articles from RSS feeds, summarises them, groups them by topic, and surfaces the three most important stories of the day — all in one click.
 
-## Setup (one-time)
+![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite&logoColor=white)
+![Claude](https://img.shields.io/badge/Claude-Sonnet-d97706)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ed?logo=docker&logoColor=white)
 
-### 1. Install Node.js
-If you don't have it: https://nodejs.org — download the "LTS" version and install it.
+<img width="1247" height="943" alt="image" src="https://github.com/user-attachments/assets/f82e63e1-44ad-48e1-8aba-3837814fb848" />
 
-### 2. Add your Anthropic API key
-- Copy `.env.example` to `.env`
-- Go to https://console.anthropic.com/settings/keys and create a key
-- Paste it into `.env` so it reads: `ANTHROPIC_API_KEY=sk-ant-...`
 
-(If you'd rather run a local model via Ollama or Open-WebUI, you can skip the key and configure a local LLM in the Sources panel.)
+## Support
 
-### 3. Install dependencies
-Open a terminal in this folder and run:
+If you find this project useful, you can support it here:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/devzelin)
+
+## Features
+
+- **AI summaries** — Claude writes a 2–3 sentence plain-English summary for every article
+- **Must-reads** — Claude picks the 3 most important stories a security professional should read today
+- **Topic grouping** — articles are automatically categorised (Ransomware, Zero-Day, Nation-State, etc.)
+- **Custom feeds** — add any RSS/Atom feed alongside the built-in sources
+- **Read history** — previously seen articles are tracked in `localStorage` so you never see repeats
+- **Digest library** — past daily digests are saved and browsable by date
+- **Newspaper layout** — clean serif typography with optional 2-column view
+
+Default sources: **The Hacker News**, **BleepingComputer**, **Risky Business**
+
+## Quick start
+
+### 1. Get an Anthropic API key (5€ will last you a long time)
+
+Create a key at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+# Open .env and set ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+### 3. Install & run
+
+```bash
 npm install
-```
-
-## Running the app
-
-```
 npm run dev
 ```
 
-Then open http://localhost:5173 in your browser. Ctrl+C to stop.
+Open [http://localhost:5173](http://localhost:5173) and click **Fetch Today's Brief**.
 
-### Running in Docker (optional)
-```
+## Docker
+
+```bash
 docker compose up
 ```
-The port is bound to `127.0.0.1:5173` so only your own machine can reach it — the Anthropic proxy would otherwise hand your API key to anyone on your LAN.
+
+The app will be available at [http://localhost:5173](http://localhost:5173).
 
 ## How it works
 
-- **Feeds** are fetched through a small dev-server proxy in [vite.config.js](vite.config.js) — the browser can't fetch RSS across origins directly, so the proxy does it server-side and streams the XML back.
-- **AI summaries** come from Claude via the Anthropic API (proxied the same way, so your key stays on the server) or from a local LLM you point at.
-- **Read history** is tracked in localStorage so articles you've already seen don't reappear. Capped at the last 500 IDs.
-- **Library** stores the last 30 days of digests in localStorage so you can browse past briefs.
-- Your API key lives only in `.env` and is never sent to the browser.
+1. **Fetch** — RSS feeds are fetched server-side through a Vite proxy (avoids CORS, keeps the API key off the client)
+2. **Deduplicate** — items already in your read history are filtered out
+3. **Summarise** — all fresh articles are sent to Claude in a single API call; Claude returns summaries, topic labels, and a top-3 ranking
+4. **Render** — results are grouped by topic and displayed with a "Must-reads" section at the top
+5. **Persist** — newly read article IDs are stored in `localStorage`; the full digest is saved to the library
+
+Your API key lives only in `.env` and is never sent to the browser.
+
+## Project structure
+
+```
+src/
+  App.jsx       # entire app — feed management, fetching, AI processing, rendering
+  main.jsx      # React entry point
+index.html
+vite.config.js  # dev server + proxy rules
+Dockerfile
+docker-compose.yml
+.env.example
+```
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| UI | React 18, Vite 5 |
+| Fonts | Playfair Display, Lora (Google Fonts) |
+| AI | Claude Sonnet via Anthropic Messages API |
+| Storage | Browser `localStorage` |
+| Proxy | Vite dev server proxy |
+| Container | Docker / docker-compose |
+
+## License
+
+MIT

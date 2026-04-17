@@ -7,6 +7,7 @@ const DEFAULT_FEEDS = [
   { id: "rb",  name: "Risky Business",   url: "https://risky.biz/feeds/risky-business/",      tag: "RB",  enabled: true, builtin: true },
 ];
 
+<<<<<<< HEAD
 const FEEDS_KEY     = "digest:feeds_v1";
 const SEEN_KEY      = "digest:seen_v2";
 const LIBRARY_KEY   = "digest:library_v1";
@@ -30,6 +31,18 @@ function loadAiConfig() {
     const r = localStorage.getItem(AI_CONFIG_KEY);
     return { ...defaults, ...(r ? JSON.parse(r) : {}) };
   } catch { return defaults; }
+=======
+const FEEDS_KEY   = "digest:feeds_v1";
+const SEEN_KEY    = "digest:seen_v2";
+const LIBRARY_KEY   = "digest:library_v1";  // stores past digests by date string
+const AI_CONFIG_KEY = "digest:ai_config_v1";
+
+function loadAiConfig() {
+  try {
+    const r = localStorage.getItem(AI_CONFIG_KEY);
+    return r ? JSON.parse(r) : { provider: "anthropic", localUrl: "http://localhost:11434", model: "llama3", apiKey: "" };
+  } catch { return { provider: "anthropic", localUrl: "http://localhost:11434", model: "llama3", apiKey: "" }; }
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
 }
 function saveAiConfig(cfg) { localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(cfg)); }
 
@@ -178,6 +191,7 @@ Respond ONLY with a valid JSON object — no markdown fences, no extra text:
   "top3": [index1, index2, index3]
 }`;
 
+<<<<<<< HEAD
 function parseAiJson(text) {
   const cleaned = text.replace(/```json|```/g, "").trim();
   try { return JSON.parse(cleaned); } catch {}
@@ -187,13 +201,20 @@ function parseAiJson(text) {
   return JSON.parse(match[0]);
 }
 
+=======
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
 async function aiProcess(items, aiConfig) {
   const payload = items.map((it, i) =>
     `[${i}] SOURCE: ${it.source}\nTITLE: ${it.title}\nBODY: ${it.description}`
   ).join("\n\n---\n\n");
 
   if (aiConfig?.provider === "local") {
+<<<<<<< HEAD
     const res = await fetchWithTimeout(`/localllm?url=${encodeURIComponent(aiConfig.localUrl)}`, {
+=======
+    // OpenAI-compatible format — works with Ollama and Open-WebUI
+    const res = await fetch(`/localllm?url=${encodeURIComponent(aiConfig.localUrl)}`, {
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -208,12 +229,17 @@ async function aiProcess(items, aiConfig) {
         temperature: 0.3,
         stream: false,
       }),
+<<<<<<< HEAD
     }, AI_TIMEOUT_MS);
+=======
+    });
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err?.error?.message || `Local LLM error ${res.status}`);
     }
     const data = await res.json();
+<<<<<<< HEAD
     return parseAiJson(data.choices?.[0]?.message?.content || "");
   }
 
@@ -237,6 +263,31 @@ async function aiProcess(items, aiConfig) {
   }
   const data = await res.json();
   return parseAiJson(data.content.map(c => c.text || "").join(""));
+=======
+    const text = data.choices?.[0]?.message?.content || "";
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+
+  } else {
+    // Anthropic format
+    const res = await fetch("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: payload }],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `API error ${res.status}`);
+    }
+    const data = await res.json();
+    const text = data.content.map(c => c.text || "").join("");
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+  }
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
 }
 
 // ─── Formatting helpers ────────────────────────────────────────────────────────
@@ -318,6 +369,7 @@ export default function DigestApp() {
   const [addError,    setAddError]    = useState("");
   const [clearMsg,    setClearMsg]    = useState("");
   const [aiConfig,    setAiConfig]    = useState(loadAiConfig);
+<<<<<<< HEAD
   const [claudeModels, setClaudeModels] = useState([]);
   const claudeModelsLoadedRef = useRef(false);
   const runningRef            = useRef(false);
@@ -336,6 +388,9 @@ export default function DigestApp() {
   }, [aiConfig.provider]);
 
   const [debugLog,    setDebugLog]    = useState([]);
+=======
+  const [debugLog,    setDebugLog]    = useState([]);  // diagnostic messages shown during fetch
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
   const [collapsedTopics, setCollapsedTopics] = useState(new Set());
 
   const [showLibrary,  setShowLibrary]  = useState(false);
@@ -516,6 +571,7 @@ export default function DigestApp() {
         </div>
       )}
 
+<<<<<<< HEAD
       {showSources && (
         <div className="panel">
           <p className="panel-title">Manage Sources</p>
@@ -528,6 +584,325 @@ export default function DigestApp() {
               <div className="feed-info">
                 <div className="feed-name">{feed.name}</div>
                 <div className="feed-url">{feed.url}</div>
+=======
+        /* ── Panel base ── */
+        .panel { max-width: 720px; margin: 0 auto 2rem; border: 1px solid #c8bda8; background: #faf7f0; padding: 1.6rem; }
+        .panel-title { font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1.2rem; }
+
+        /* ── Sources panel ── */
+        .feed-row { display: flex; align-items: center; gap: 0.8rem; padding: 0.65rem 0; border-bottom: 1px solid #ece6da; }
+        .feed-row:last-of-type { border-bottom: none; }
+        .feed-toggle { position: relative; width: 32px; height: 18px; flex-shrink: 0; cursor: pointer; }
+        .feed-toggle input { opacity: 0; width: 0; height: 0; }
+        .feed-toggle-track { position: absolute; inset: 0; border-radius: 9px; background: #c8bda8; transition: background 0.2s; }
+        .feed-toggle input:checked ~ .feed-toggle-track { background: #1c1912; }
+        .feed-toggle-thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #f5f1e8; transition: transform 0.2s; }
+        .feed-toggle input:checked ~ .feed-toggle-track .feed-toggle-thumb { transform: translateX(14px); }
+        .feed-info { flex: 1; min-width: 0; }
+        .feed-name { font-size: 0.85rem; color: #1c1912; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .feed-url  { font-size: 0.65rem; color: #9a8f7a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .feed-tag  { font-size: 0.55rem; letter-spacing: 0.12em; text-transform: uppercase; background: #e8e1d4; color: #5a4e38; padding: 0.2em 0.55em; border-radius: 2px; flex-shrink: 0; }
+        .feed-remove { background: none; border: none; color: #c8bda8; font-size: 1rem; cursor: pointer; line-height: 1; padding: 0 0.2rem; transition: color 0.15s; flex-shrink: 0; }
+        .feed-remove:hover { color: #7a1e1e; }
+        .add-feed-form { margin-top: 1.2rem; display: flex; flex-direction: column; gap: 0.6rem; }
+        .add-feed-row  { display: flex; gap: 0.6rem; }
+        .add-feed-input { flex: 1; background: #f5f1e8; border: 1px solid #c8bda8; color: #1c1912; font-family: 'Lora', serif; font-size: 0.78rem; padding: 0.55em 0.8em; border-radius: 2px; outline: none; }
+        .add-feed-input:focus { border-color: #7a6f5a; }
+        .add-feed-input::placeholder { color: #b0a48f; }
+        .add-feed-btn { background: #1c1912; border: none; color: #f5f1e8; font-family: 'Lora', serif; font-size: 0.62rem; letter-spacing: 0.15em; text-transform: uppercase; padding: 0.6em 1.2em; cursor: pointer; border-radius: 2px; white-space: nowrap; transition: opacity 0.15s; }
+        .add-feed-btn:hover { opacity: 0.75; }
+        .add-feed-error { font-size: 0.72rem; color: #7a1e1e; }
+
+        /* ── Clear data ── */
+        .clear-data-section { margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px dashed #c8bda8; }
+        .clear-data-label { font-size: 0.65rem; letter-spacing: 0.12em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.7rem; }
+        .clear-data-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+        .clear-btn { background: none; border: 1px solid #c8bda8; color: #7a6f5a; font-family: 'Lora', serif; font-size: 0.6rem; letter-spacing: 0.13em; text-transform: uppercase; padding: 0.45em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+        .clear-btn:hover { border-color: #7a1e1e; color: #7a1e1e; }
+        .clear-btn.danger:hover { background: #7a1e1e; color: #f5f1e8; border-color: #7a1e1e; }
+
+        /* ── Library panel ── */
+        .library-days { display: flex; flex-direction: column; gap: 0.2rem; }
+        .library-day-btn { background: none; border: none; border-bottom: 1px solid #ece6da; padding: 0.7rem 0; cursor: pointer; text-align: left; font-family: 'Lora', serif; font-size: 0.82rem; color: #4a4132; display: flex; justify-content: space-between; align-items: center; transition: color 0.15s; }
+        .library-day-btn:hover { color: #1c1912; }
+        .library-day-btn.selected { color: #1c1912; font-weight: 600; }
+        .library-day-stats { font-size: 0.62rem; color: #9a8f7a; letter-spacing: 0.08em; }
+        .library-empty { font-size: 0.8rem; color: #9a8f7a; font-style: italic; }
+
+        /* Library day view — reuses article/group styles */
+        .library-back { background: none; border: none; font-family: 'Lora', serif; font-size: 0.62rem; letter-spacing: 0.15em; text-transform: uppercase; color: #7a6f5a; cursor: pointer; padding: 0; margin-bottom: 1.4rem; display: flex; align-items: center; gap: 0.4rem; transition: color 0.15s; }
+        .library-back:hover { color: #1c1912; }
+        .library-day-heading { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 600; color: #1c1912; margin-bottom: 0.3rem; }
+        .library-day-sub { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 1.6rem; }
+
+        /* ── Column layout toggle ── */
+        .col-toggle { display: flex; border: 1px solid #c8bda8; border-radius: 2px; overflow: hidden; }
+        .col-btn { background: none; border: none; color: #9a8f7a; cursor: pointer; padding: 0.38em 0.6em; font-size: 0.7rem; line-height: 1; transition: all 0.15s; }
+        .col-btn:hover { background: #e8e1d4; color: #1c1912; }
+        .col-btn.active { background: #1c1912; color: #f5f1e8; }
+
+        /* 2-column: topic sections go full-width, articles inside go 2-col grid */
+        .two-col .topic-section { max-width: 1100px; }
+        .two-col .stats-bar     { max-width: 1100px; }
+        .two-col .top3-section  { max-width: 1100px; }
+        .two-col .digest-footer { max-width: 1100px; }
+        .two-col .panel         { max-width: 1100px; }
+        .two-col .top3-cards    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 2rem; }
+        .two-col .article-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; }
+        .two-col .article       { break-inside: avoid; }
+        @media (max-width: 800px) {
+          .two-col .article-grid { grid-template-columns: 1fr; }
+          .two-col .top3-cards   { grid-template-columns: 1fr; }
+        }
+
+        /* ── Top 3 section ── */
+        .top3-section { max-width: 720px; margin: 0 auto 2.8rem; }
+        .top3-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #1c1912; display: flex; align-items: center; gap: 0.6rem; }
+        .top3-star { color: #1c1912; font-size: 0.7rem; }
+        .top3-card { padding: 1.1rem 0 1.1rem 1.1rem; border-bottom: 1px solid #ddd5c4; border-left: 2px solid #1c1912; margin-bottom: 0.1rem; }
+        .top3-card:last-child { border-bottom: none; }
+        .top3-rank { font-size: 0.58rem; letter-spacing: 0.18em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.35rem; }
+
+        /* ── Idle ── */
+        .idle-wrap { max-width: 720px; margin: 4rem auto; text-align: center; }
+        .idle-greeting { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-style: italic; color: #4a3f2a; margin-bottom: 0.6rem; }
+        .idle-sub { font-size: 0.8rem; color: #9a8f7a; margin-bottom: 2rem; line-height: 1.7; }
+
+        /* ── Buttons ── */
+        .fetch-btn { background: #1c1912; border: none; color: #f5f1e8; font-family: 'Lora', serif; font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; padding: 0.9em 2.4em; cursor: pointer; border-radius: 2px; transition: opacity 0.15s; }
+        .fetch-btn:hover { opacity: 0.75; }
+        .refresh-btn { background: none; border: 1px solid #9a8f7a; color: #5a4e38; font-family: 'Lora', serif; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; padding: 0.4em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+        .refresh-btn:hover { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
+
+        /* ── Loading ── */
+        .status-wrap { max-width: 720px; margin: 4rem auto; text-align: center; }
+        .spinner { width: 26px; height: 26px; border: 2px solid #c8bda8; border-top-color: #1c1912; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1.2rem; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .status-label { font-size: 0.72rem; letter-spacing: 0.15em; text-transform: uppercase; color: #7a6f5a; }
+
+        /* ── Error / caught-up ── */
+        .err-head { font-family: 'Playfair Display', serif; font-size: 1.2rem; color: #7a1e1e; margin-bottom: 0.5rem; }
+        .err-detail { font-size: 0.78rem; color: #7a6f5a; margin-bottom: 1.4rem; }
+        .caught-up { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-style: italic; color: #4a3f2a; margin-bottom: 0.5rem; }
+        .caught-up-sub { font-size: 0.8rem; color: #7a6f5a; margin-bottom: 2rem; }
+
+        /* ── Stats bar ── */
+        .stats-bar { max-width: 720px; margin: 0 auto 2.5rem; display: flex; align-items: center; justify-content: space-between; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: #7a6f5a; }
+
+        /* ── Topic sections ── */
+        .topic-section { max-width: 720px; margin: 0 auto 2.8rem; }
+        .topic-header { font-size: 0.62rem; letter-spacing: 0.25em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #c8bda8; display: flex; align-items: center; gap: 0.6rem; cursor: pointer; user-select: none; }
+        .topic-header:hover { color: #1c1912; }
+        .topic-count { background: #1c1912; color: #f5f1e8; font-size: 0.52rem; padding: 0.15em 0.55em; border-radius: 10px; }
+        .topic-chevron { margin-left: auto; font-size: 0.7rem; transition: transform 0.2s; display: inline-block; }
+        .topic-chevron.collapsed { transform: rotate(-90deg); }
+
+        /* ── Articles ── */
+        .article { padding: 1.1rem 0; border-bottom: 1px solid #ddd5c4; }
+        .article:last-child { border-bottom: none; }
+        .article-meta { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.45rem; }
+        .source-tag { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; background: #e8e1d4; color: #5a4e38; padding: 0.2em 0.6em; border-radius: 2px; font-weight: 500; }
+        .article-date { font-size: 0.64rem; color: #9a8f7a; }
+        .article-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 600; line-height: 1.35; color: #1c1912; text-decoration: none; display: block; margin-bottom: 0.5rem; transition: color 0.15s; }
+        .article-title:hover { color: #5a3e1a; }
+        .article-summary { font-size: 0.88rem; line-height: 1.7; color: #4a4132; }
+
+        /* ── Footer ── */
+        .digest-footer { max-width: 720px; margin: 3rem auto 0; padding-top: 1.4rem; border-top: 3px double #c8bda8; display: flex; align-items: center; justify-content: space-between; font-size: 0.64rem; letter-spacing: 0.1em; text-transform: uppercase; color: #9a8f7a; }
+
+        /* ── AI provider settings ── */
+        .ai-section { margin-top: 1.6rem; padding-top: 1.2rem; border-top: 1px solid #e8e1d4; }
+        .ai-section-title { font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase; color: #7a6f5a; margin-bottom: 1rem; }
+        .ai-provider-row { display: flex; gap: 0.6rem; margin-bottom: 0.8rem; }
+        .ai-provider-btn { flex: 1; background: none; border: 1px solid #c8bda8; color: #7a6f5a; font-family: 'Lora', serif; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.6em 1em; cursor: pointer; border-radius: 2px; transition: all 0.15s; }
+        .ai-provider-btn.selected { background: #1c1912; color: #f5f1e8; border-color: #1c1912; }
+        .ai-provider-btn:hover:not(.selected) { border-color: #7a6f5a; color: #1c1912; }
+        .ai-field-label { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: #9a8f7a; margin-bottom: 0.3rem; }
+        .ai-field-row { display: flex; gap: 0.6rem; margin-bottom: 0.6rem; }
+
+        /* Dark mode AI section */
+        .dark .ai-section { border-top-color: #2e2820; }
+        .dark .ai-section-title { color: #5a5448; }
+        .dark .ai-provider-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .ai-provider-btn.selected { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .ai-provider-btn:hover:not(.selected) { border-color: #6a6050; color: #ede8df; }
+        .dark .ai-field-label { color: #5a5448; }
+
+        /* Geek mode AI section */
+        .geek .ai-section { border-top-color: #002200; }
+        .geek .ai-section-title { color: #00b800; }
+        .geek .ai-provider-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .ai-provider-btn.selected { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .ai-provider-btn:hover:not(.selected) { border-color: #33ff33; color: #33ff33; background: #002200; }
+        .geek .ai-field-label { color: #007700; }
+
+        /* ── Dark mode ── */
+        .dark { background: #131110; color: #ede8df; }
+        .dark .masthead-meta  { color: #5a5448; }
+        .dark .masthead-title { color: #ede8df; }
+        .dark .masthead-rule-top  { border-top-color: #ede8df; }
+        .dark .masthead-rule-thin { border-top-color: #ede8df; }
+        .dark .masthead-sub    { color: #5a5448; }
+        .dark .masthead-byline { color: #3e3830; }
+        .dark .hdr-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .hdr-btn:hover  { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .hdr-btn.active { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .hdr-badge { background: #ede8df; color: #131110; }
+        .dark .hdr-btn.active .hdr-badge { background: #131110; color: #ede8df; }
+        .dark .col-toggle { border-color: #3a342a; }
+        .dark .col-btn { color: #6a6050; }
+        .dark .col-btn:hover  { background: #2a2520; color: #ede8df; }
+        .dark .col-btn.active { background: #ede8df; color: #131110; }
+        .dark .panel { border-color: #2e2820; background: #1b1814; }
+        .dark .panel-title { color: #5a5448; }
+        .dark .feed-row { border-bottom-color: #2a2520; }
+        .dark .feed-toggle-track { background: #3a342a; }
+        .dark .feed-toggle input:checked ~ .feed-toggle-track { background: #ede8df; }
+        .dark .feed-toggle-thumb { background: #131110; }
+        .dark .feed-name { color: #ede8df; }
+        .dark .feed-url  { color: #5a5448; }
+        .dark .feed-tag  { background: #2a2520; color: #9a8e7a; }
+        .dark .feed-remove { color: #3a342a; }
+        .dark .feed-remove:hover { color: #d44444; }
+        .dark .add-feed-input { background: #131110; border-color: #3a342a; color: #ede8df; }
+        .dark .add-feed-input:focus { border-color: #6a6050; }
+        .dark .add-feed-input::placeholder { color: #3e3830; }
+        .dark .add-feed-btn { background: #ede8df; color: #131110; }
+        .dark .add-feed-error { color: #d44444; }
+        .dark .clear-data-section { border-top-color: #2e2820; }
+        .dark .clear-data-label { color: #5a5448; }
+        .dark .clear-btn { border-color: #3a342a; color: #6a6050; }
+        .dark .clear-btn:hover { border-color: #d44444; color: #d44444; }
+        .dark .clear-btn.danger:hover { background: #d44444; color: #ede8df; border-color: #d44444; }
+        .dark .library-days { }
+        .dark .library-day-btn { border-bottom-color: #2a2520; color: #9a8e7a; }
+        .dark .library-day-btn:hover   { color: #ede8df; }
+        .dark .library-day-btn.selected { color: #ede8df; }
+        .dark .library-day-stats { color: #3e3830; }
+        .dark .library-empty { color: #3e3830; }
+        .dark .library-back { color: #5a5448; }
+        .dark .library-back:hover { color: #ede8df; }
+        .dark .library-day-heading { color: #ede8df; }
+        .dark .library-day-sub { color: #5a5448; }
+        .dark .stats-bar { color: #5a5448; }
+        .dark .topic-header { color: #5a5448; border-bottom-color: #2e2820; }
+        .dark .topic-header:hover { color: #ede8df; }
+        .dark .topic-count { background: #ede8df; color: #131110; }
+        .dark .article { border-bottom-color: #2a2520; }
+        .dark .source-tag { background: #2a2520; color: #9a8e7a; }
+        .dark .article-date { color: #3e3830; }
+        .dark .article-title { color: #ede8df; }
+        .dark .article-title:hover { color: #c8a870; }
+        .dark .article-summary { color: #8a7e6e; }
+        .dark .top3-header { color: #5a5448; border-bottom-color: #ede8df; }
+        .dark .top3-star  { color: #ede8df; }
+        .dark .top3-card  { border-bottom-color: #2a2520; border-left-color: #ede8df; }
+        .dark .top3-rank  { color: #3e3830; }
+        .dark .idle-greeting { color: #b0a48e; }
+        .dark .idle-sub { color: #5a5448; }
+        .dark .fetch-btn { background: #ede8df; color: #131110; }
+        .dark .refresh-btn { border-color: #5a5448; color: #8a7e6e; }
+        .dark .refresh-btn:hover { background: #ede8df; color: #131110; border-color: #ede8df; }
+        .dark .status-label { color: #5a5448; }
+        .dark .spinner { border-color: #2e2820; border-top-color: #ede8df; }
+        .dark .err-head { color: #d44444; }
+        .dark .err-detail { color: #5a5448; }
+        .dark .caught-up { color: #b0a48e; }
+        .dark .caught-up-sub { color: #5a5448; }
+        .dark .digest-footer { border-top-color: #2e2820; color: #3e3830; }
+
+        /* ── Geek / Terminal mode ── */
+        .geek { background: #000; color: #33ff33; }
+        .geek * { font-family: 'Courier New', Courier, monospace !important; font-style: normal !important; }
+        .geek::before { content: ''; position: fixed; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.12) 3px, rgba(0,0,0,0.12) 4px); pointer-events: none; z-index: 9999; }
+        .geek .masthead-title { color: #33ff33; text-shadow: 0 0 18px #33ff33, 0 0 40px rgba(51,255,51,0.4); letter-spacing: 0.05em; }
+        .geek .masthead-meta  { color: #00b800; }
+        .geek .masthead-rule-top  { border-top-color: #33ff33; box-shadow: 0 0 8px #33ff33; }
+        .geek .masthead-rule-thin { border-top-color: #007700; }
+        .geek .masthead-sub    { color: #00b800; }
+        .geek .masthead-byline { color: #007700; }
+        .geek .hdr-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .hdr-btn:hover  { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .hdr-btn.active { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .hdr-badge { background: #33ff33; color: #000; }
+        .geek .hdr-btn.active .hdr-badge { background: #000; color: #33ff33; }
+        .geek .col-toggle { border-color: #33ff33; }
+        .geek .col-btn { color: #33ff33; }
+        .geek .col-btn:hover  { background: #002200; color: #33ff33; }
+        .geek .col-btn.active { background: #33ff33; color: #000; }
+        .geek .panel { border-color: #33ff33; background: #000; box-shadow: 0 0 16px rgba(51,255,51,0.12); }
+        .geek .panel-title { color: #00b800; }
+        .geek .feed-row { border-bottom-color: #002200; }
+        .geek .feed-toggle-track { background: #002200; }
+        .geek .feed-toggle input:checked ~ .feed-toggle-track { background: #33ff33; }
+        .geek .feed-toggle-thumb { background: #000; }
+        .geek .feed-name { color: #33ff33; }
+        .geek .feed-url  { color: #00b800; }
+        .geek .feed-tag  { background: #002200; color: #33ff33; }
+        .geek .feed-remove { color: #002200; }
+        .geek .feed-remove:hover { color: #ff3333; }
+        .geek .add-feed-input { background: #000; border-color: #33ff33; color: #33ff33; }
+        .geek .add-feed-input:focus { border-color: #33ff33; box-shadow: 0 0 6px #33ff33; }
+        .geek .add-feed-input::placeholder { color: #003300; }
+        .geek .add-feed-btn { background: #33ff33; color: #000; border: none; }
+        .geek .add-feed-error { color: #ff3333; }
+        .geek .clear-data-section { border-top-color: #002200; }
+        .geek .clear-data-label { color: #007700; }
+        .geek .clear-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .clear-btn:hover { border-color: #ff3333; color: #ff3333; }
+        .geek .clear-btn.danger:hover { background: #ff3333; color: #000; border-color: #ff3333; }
+        .geek .library-day-btn { border-bottom-color: #002200; color: #00b800; }
+        .geek .library-day-btn:hover   { color: #33ff33; }
+        .geek .library-day-btn.selected { color: #33ff33; }
+        .geek .library-day-stats { color: #007700; }
+        .geek .library-empty { color: #007700; }
+        .geek .library-back { color: #00b800; }
+        .geek .library-back:hover { color: #33ff33; }
+        .geek .library-day-heading { color: #33ff33; text-shadow: 0 0 8px #33ff33; }
+        .geek .library-day-sub { color: #00b800; }
+        .geek .stats-bar { color: #007700; }
+        .geek .topic-header { color: #00b800; border-bottom-color: #002200; }
+        .geek .topic-header:hover { color: #33ff33; }
+        .geek .topic-count { background: #33ff33; color: #000; }
+        .geek .article { border-bottom-color: #002200; }
+        .geek .source-tag { background: #002200; color: #33ff33; }
+        .geek .article-date { color: #007700; }
+        .geek .article-title { color: #33ff33; text-shadow: 0 0 5px rgba(51,255,51,0.5); }
+        .geek .article-title:hover { color: #fff; text-shadow: 0 0 10px #fff; }
+        .geek .article-summary { color: #00b800; }
+        .geek .top3-header { color: #00b800; border-bottom-color: #33ff33; }
+        .geek .top3-star  { color: #33ff33; text-shadow: 0 0 10px #33ff33; }
+        .geek .top3-card  { border-bottom-color: #002200; border-left-color: #33ff33; box-shadow: -4px 0 12px rgba(51,255,51,0.2); }
+        .geek .top3-rank  { color: #007700; }
+        .geek .idle-greeting { color: #33ff33; text-shadow: 0 0 12px #33ff33; }
+        .geek .idle-sub { color: #00b800; }
+        .geek .fetch-btn { background: #33ff33; color: #000; }
+        .geek .fetch-btn:hover { background: #000; color: #33ff33; border: 1px solid #33ff33; opacity: 1; }
+        .geek .refresh-btn { border-color: #33ff33; color: #33ff33; }
+        .geek .refresh-btn:hover { background: #33ff33; color: #000; border-color: #33ff33; }
+        .geek .status-label { color: #33ff33; text-shadow: 0 0 6px #33ff33; }
+        .geek .spinner { border-color: #002200; border-top-color: #33ff33; box-shadow: 0 0 8px rgba(51,255,51,0.4); }
+        .geek .err-head { color: #ff3333; text-shadow: 0 0 8px #ff3333; }
+        .geek .err-detail { color: #00b800; }
+        .geek .caught-up { color: #33ff33; text-shadow: 0 0 12px #33ff33; }
+        .geek .caught-up-sub { color: #00b800; }
+        .geek .digest-footer { border-top-color: #002200; color: #007700; }
+      `}</style>
+
+      <div className={`digest-wrap${columns === 2 ? " two-col" : ""}${theme === "dark" ? " dark" : ""}${theme === "geek" ? " geek" : ""}`}>
+
+        {/* ── Masthead ── */}
+        <header className="masthead">
+          <div className="masthead-top">
+            <p className="masthead-meta">{TODAY}</p>
+            <div className="masthead-actions">
+              <button className={`hdr-btn${theme !== "light" ? " active" : ""}`} onClick={() => { const next = theme === "light" ? "dark" : theme === "dark" ? "geek" : "light"; setTheme(next); localStorage.setItem("digest:theme", next); }}>
+                {theme === "geek" ? "☀ Light" : theme === "dark" ? "▣ Geek" : "☾ Dark"}
+              </button>
+              <div className="col-toggle">
+                <button className={`col-btn${columns === 1 ? " active" : ""}`} onClick={() => { setColumns(1); localStorage.setItem("digest:columns", 1); }} title="Single column">▬</button>
+                <button className={`col-btn${columns === 2 ? " active" : ""}`} onClick={() => { setColumns(2); localStorage.setItem("digest:columns", 2); }} title="Two columns">⊟</button>
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
               </div>
               <span className="feed-tag">{feed.tag}</span>
               {!feed.builtin && (
@@ -567,6 +942,105 @@ export default function DigestApp() {
                     : <input className="add-feed-input" placeholder={`e.g. ${DEFAULT_CLAUDE_MODEL}`} value={aiConfig.claudeModel || ""} onChange={e => updateAiConfig({ ...aiConfig, claudeModel: e.target.value })} />
                   }
                 </div>
+<<<<<<< HEAD
+=======
+                <span className="feed-tag">{feed.tag}</span>
+                {!feed.builtin && (
+                  <button className="feed-remove" onClick={() => removeFeed(feed.id)} title="Remove">×</button>
+                )}
+              </div>
+            ))}
+            <div className="add-feed-form">
+              <div className="add-feed-row">
+                <input className="add-feed-input" placeholder="Source name (e.g. Krebs On Security)" value={newName} onChange={e => setNewName(e.target.value)} />
+              </div>
+              <div className="add-feed-row">
+                <input className="add-feed-input" placeholder="RSS/Atom feed URL" value={newUrl} onChange={e => setNewUrl(e.target.value)} />
+                <button className="add-feed-btn" onClick={addFeed}>Add</button>
+              </div>
+              {addError && <p className="add-feed-error">{addError}</p>}
+            </div>
+
+            {/* ── AI Provider ── */}
+            <div className="ai-section">
+              <p className="ai-section-title">AI Provider</p>
+              <div className="ai-provider-row">
+                <button className={`ai-provider-btn${aiConfig.provider === "anthropic" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "anthropic" })}>
+                  ☁ Anthropic (Claude)
+                </button>
+                <button className={`ai-provider-btn${aiConfig.provider === "local" ? " selected" : ""}`} onClick={() => updateAiConfig({ ...aiConfig, provider: "local" })}>
+                  🖥 Local LLM
+                </button>
+              </div>
+              {aiConfig.provider === "local" && (
+                <>
+                  <p className="ai-field-label">Server URL</p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" placeholder="http://192.168.1.x:11434" value={aiConfig.localUrl} onChange={e => updateAiConfig({ ...aiConfig, localUrl: e.target.value })} />
+                  </div>
+                  <p className="ai-field-label">Model name</p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" placeholder="e.g. llama3, mistral, gemma3" value={aiConfig.model} onChange={e => updateAiConfig({ ...aiConfig, model: e.target.value })} />
+                  </div>
+                  <p className="ai-field-label">API Key <span style={{fontStyle:"italic", textTransform:"none", letterSpacing:0}}>(optional)</span></p>
+                  <div className="ai-field-row">
+                    <input className="add-feed-input" type="password" placeholder="Leave blank if not required" value={aiConfig.apiKey || ""} onChange={e => updateAiConfig({ ...aiConfig, apiKey: e.target.value })} />
+                  </div>
+                  <p style={{fontSize:"0.68rem", color:"#9a8f7a", lineHeight:"1.6"}}>
+                    Works with Ollama (<code>ollama serve</code>) or Open-WebUI.<br/>
+                    The server must be reachable from this machine.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* ── Clear data ── */}
+            <div className="clear-data-section">
+              <p className="clear-data-label">Reset</p>
+              <div className="clear-data-row">
+                <button className="clear-btn danger" onClick={() => {
+                  clearSeenCache();
+                  setClearMsg("Read history cleared — all articles will show as new.");
+                  setTimeout(() => setClearMsg(""), 4000);
+                }}>
+                  Clear read history
+                </button>
+                <button className="clear-btn danger" onClick={() => {
+                  localStorage.removeItem("digest:library_v1");
+                  setLibrary({});
+                  setClearMsg("Library cleared.");
+                  setTimeout(() => setClearMsg(""), 4000);
+                }}>
+                  Clear library
+                </button>
+              </div>
+              {clearMsg && <p style={{fontSize:"0.72rem", color:"#5a8a5a", marginTop:"0.6rem"}}>{clearMsg}</p>}
+            </div>
+          </div>
+        )}
+
+        {/* ── Library panel ── */}
+        {showLibrary && (
+          <div className="panel">
+            {!libraryDay ? (
+              <>
+                <p className="panel-title">Past Digests</p>
+                {libraryDays.length === 0
+                  ? <p className="library-empty">No past digests yet — they'll appear here after your first fetch.</p>
+                  : (
+                    <div className="library-days">
+                      {libraryDays.map(key => (
+                        <button key={key} className={`library-day-btn${libraryDay === key ? " selected" : ""}`} onClick={() => openLibraryDay(key)}>
+                          <span>{fmtLibraryDate(key)}</span>
+                          <span className="library-day-stats">
+                            {library[key].stats?.newCount || 0} articles · {library[key].stats?.topicCount || 0} topics
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                }
+>>>>>>> 5179f143d46faa654aa496c40b4ef9023b86c246
               </>
             )}
             {aiConfig.provider === "local" && (
