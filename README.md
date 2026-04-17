@@ -73,6 +73,7 @@ Your API key lives only in `.env` and is never sent to the browser.
 ```
 src/
   App.jsx       # entire app — feed management, fetching, AI processing, rendering
+  styles.css    # all styles (light, dark, geek themes)
   main.jsx      # React entry point
 index.html
 vite.config.js  # dev server + proxy rules
